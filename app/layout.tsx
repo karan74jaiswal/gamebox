@@ -1,3 +1,5 @@
+import { ClerkProvider } from "@clerk/nextjs"
+import { shadcn } from "@clerk/ui/themes"
 import { Geist, Geist_Mono } from "next/font/google"
 
 import "./globals.css"
@@ -20,7 +22,6 @@ export const metadata: Metadata = {
   description:
     "Describe a game and watch it come to life. Gamebox is an agentic three.js game builder that plans the scene, writes the code, and streams playable worlds from plain English.",
 }
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -38,7 +39,9 @@ export default function RootLayout({
       )}
     >
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ClerkProvider appearance={{ theme: shadcn }}>
+          <ThemeProvider>{children}</ThemeProvider>
+        </ClerkProvider>
       </body>
     </html>
   )
