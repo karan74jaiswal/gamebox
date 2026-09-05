@@ -15,7 +15,7 @@ export default async function Page() {
 
   return (
     <div className="flex min-h-svh flex-col items-center justify-center gap-4">
-      <Empty>
+      <Empty className="flex-none">
         <EmptyHeader>
           <EmptyMedia>
             <Image src="/logo.svg" alt="Gamebox" width={48} height={48} />
