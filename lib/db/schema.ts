@@ -1,4 +1,4 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 
 export const games = pgTable(
   "games",
@@ -20,3 +20,23 @@ export const games = pgTable(
 
 export type Game = typeof games.$inferSelect;
 export type NewGame = typeof games.$inferInsert;
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: text("id").primaryKey(),
+    chatId: text("chat_id").notNull(),
+    userId: text("user_id"),
+    role: text("role").notNull(),
+    parts: jsonb("parts").notNull(),
+    metadata: jsonb("metadata"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    index("messages_chat_id_idx").on(table.chatId),
+    index("messages_created_at_idx").on(table.createdAt),
+  ]
+);
+
+export type Message = typeof messages.$inferSelect;
+export type NewMessage = typeof messages.$inferInsert;

@@ -67,6 +67,10 @@ export interface ChatThreadProps {
 }
 
 export function ChatThread({ id, className }: ChatThreadProps) {
+  const sendMessage = (value: string) => {
+    console.log(`[ChatThread${id ? ` id=${id}` : ""}] sendMessage:`, value)
+  }
+
   return (
     <div className={cn("flex size-full min-h-0 flex-col", className)}>
       <div className="min-h-0 flex-1">
@@ -114,7 +118,10 @@ export function ChatThread({ id, className }: ChatThreadProps) {
       </div>
 
       <div className="mx-auto w-full max-w-3xl p-4">
-        <ChatComposer placeholder="Ask a follow up or describe changes..." />
+        <ChatComposer
+          placeholder="Ask a follow up or describe changes..."
+          sendMessage={sendMessage}
+        />
       </div>
     </div>
   )

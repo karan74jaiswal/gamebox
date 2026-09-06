@@ -1,6 +1,7 @@
 "use client"
 
 import * as React from "react"
+import { useRouter } from "next/navigation"
 import { Grip, ChevronDown, ArrowUp } from "lucide-react"
 
 import {
@@ -25,6 +26,8 @@ export interface ChatComposerProps {
   onChange?: (value: string) => void
   placeholder?: string
   className?: string
+  sendMessage?: (value: string, options?: { model?: string }) => void | Promise<void>
+  onSendMessage?: (value: string, options?: { model?: string }) => void | Promise<void>
 }
 
 export function ChatComposer({
@@ -34,7 +37,10 @@ export function ChatComposer({
   onChange,
   placeholder = "Describe the game you want to build...",
   className,
+  sendMessage,
+  onSendMessage,
 }: ChatComposerProps = {}) {
+  const router = useRouter()
   const [internalPrompt, setInternalPrompt] = React.useState("")
   const [model, setModel] = React.useState("Kimi K3")
   const [isPending, startTransition] = React.useTransition()
@@ -56,20 +62,32 @@ export function ChatComposer({
     onChange?.(newValue)
   }
 
-  const handleCreate = () => {
-    const title = currentValue.trim()
-    if (!title || isPending) return
+  const handleSubmit = () => {
+    const content = currentValue.trim()
+    if (!content || isPending) return
+
+    const sendAction = onSendMessage || sendMessage
 
     startTransition(async () => {
       try {
-        await createGame({ title })
+        if (sendAction) {
+          await sendAction(content, { model })
+        } else {
+          const newGame = await createGame({ title: content })
+          if (newGame?.id) {
+            router.push(`/games/${newGame.id}`)
+          }
+        }
         if (!isControlled) {
           setInternalPrompt("")
         }
         onInputChange?.("")
         onChange?.("")
       } catch (error) {
-        console.error("Failed to create game:", error)
+        console.error(
+          sendAction ? "Failed to send message:" : "Failed to create game:",
+          error
+        )
       }
     })
   }
@@ -86,7 +104,7 @@ export function ChatComposer({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
-              handleCreate()
+              handleSubmit()
             }
           }}
           disabled={isPending}
@@ -121,7 +139,7 @@ export function ChatComposer({
             variant="default"
             className="rounded-full"
             disabled={!currentValue.trim() || isPending}
-            onClick={handleCreate}
+            onClick={handleSubmit}
           >
             <ArrowUp />
           </InputGroupButton>
