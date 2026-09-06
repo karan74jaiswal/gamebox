@@ -3,3 +3,9 @@
 
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
+
+# Database Workflow (Drizzle ORM & Neon)
+
+- **FORBIDDEN**: Do NOT use `drizzle-kit generate` or `drizzle-kit migrate` (or `npm run db:migrate` / `npm run db:generate`). Do not create or commit migration files.
+- **REQUIRED**: Always use `npm run db:push` (`drizzle-kit push`) to synchronize schema changes directly with the database.
+- **RATIONALE**: This project is in active development and there is no need for backward compatibility or migration history tracking. Schema iterations should be applied directly using `db:push`.

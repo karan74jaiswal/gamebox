@@ -1,4 +1,5 @@
 import { ClerkProvider } from "@clerk/nextjs"
+import { ui } from "@clerk/ui"
 import { shadcn } from "@clerk/ui/themes"
 import { Fraunces, Geist, Geist_Mono } from "next/font/google"
 
@@ -45,7 +46,7 @@ export default function RootLayout({
       )}
     >
       <body>
-        <ClerkProvider appearance={{ theme: shadcn }}>
+        <ClerkProvider appearance={{ theme: shadcn }} ui={ui}>
           <ThemeProvider>{children}</ThemeProvider>
         </ClerkProvider>
       </body>
