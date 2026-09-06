@@ -3,17 +3,21 @@ import { anthropic } from "@ai-sdk/anthropic"
 import { google } from "@ai-sdk/google"
 import { openai } from "@ai-sdk/openai"
 import {
+  consumeStream,
   convertToModelMessages,
   createUIMessageStreamResponse,
   gateway,
+  generateId,
   streamText,
   toUIMessageStream,
+  validateUIMessages,
   type LanguageModel,
   type UIMessage,
 } from "ai"
 
-import { getMessagesByChatId, saveMessages } from "@/lib/db/messages"
 import { resolveModel } from "@/lib/ai/models"
+import { saveGameMessages } from "@/lib/games/actions"
+import { getGame } from "@/lib/games/queries"
 
 // Allow streaming responses up to 60 seconds
 export const maxDuration = 60
@@ -144,7 +148,8 @@ function getLanguageModel(provider?: string, model?: string): LanguageModel {
       if (mLower.includes("3.8")) return gateway("google/gemini-3.8-flash")
       if (mLower.includes("3.7")) return gateway("google/gemini-3.7-flash")
       if (mLower.includes("3.5")) return gateway("google/gemini-3.5-flash")
-      if (mLower.includes("3.1")) return gateway("google/gemini-3.1-pro-preview")
+      if (mLower.includes("3.1"))
+        return gateway("google/gemini-3.1-pro-preview")
       if (mLower.includes("pro")) return gateway("google/gemini-2.5-pro")
       return gateway("google/gemini-2.5-flash")
     }
@@ -196,7 +201,7 @@ function getLanguageModel(provider?: string, model?: string): LanguageModel {
 
 export async function POST(req: Request) {
   // 1. Auth gate with Clerk SDK
-  const { userId } = await auth()
+  const { userId, orgId } = await auth()
   if (!userId) {
     return new Response("Unauthorized", { status: 401 })
   }
@@ -220,32 +225,33 @@ export async function POST(req: Request) {
     return new Response("Messages array is required", { status: 400 })
   }
 
-  const effectiveChatId = chatId || id || "default"
+  const gameId = id || chatId
+  if (!gameId) {
+    return new Response("Game ID is required", { status: 400 })
+  }
 
   // 3. Persist incoming browser history immediately so user messages are never lost
-  await saveMessages({
-    chatId: effectiveChatId,
-    userId,
-    messages,
-  })
+  await saveGameMessages(gameId, messages, orgId)
 
   // 4. Select provider & model (Google, OpenAI, or Anthropic)
   const selectedModel = getLanguageModel(provider, model)
-
-  // 5. Stream response using AI SDK
+  // 5. Validate that the messages are in correct format
+  const validatedMessages = await validateUIMessages({ messages })
+  // 6. Stream response using AI SDK
   const result = streamText({
     model: selectedModel,
-    messages: await convertToModelMessages(messages),
+    messages: await convertToModelMessages(validatedMessages),
   })
 
   // Ensure stream runs to completion even if client disconnects
   result.consumeStream()
 
-  // 6. Return streaming response compatible with useChat, saving full messages upon completion
+  // 7. Return streaming response compatible with useChat, saving full messages upon completion
   return createUIMessageStreamResponse({
     stream: toUIMessageStream({
       stream: result.stream,
       originalMessages: messages,
+      generateMessageId: generateId,
       onError: (error) => {
         if (error == null) return "An error occurred."
         if (typeof error === "string") return error
@@ -254,16 +260,13 @@ export async function POST(req: Request) {
       },
       onEnd: async ({ messages: completedMessages }) => {
         try {
-          await saveMessages({
-            chatId: effectiveChatId,
-            userId,
-            messages: completedMessages,
-          })
+          await saveGameMessages(gameId, completedMessages, orgId)
         } catch (error) {
           console.error("Failed to persist completed chat messages:", error)
         }
       },
     }),
+    consumeSseStream: consumeStream,
   })
 }
 
@@ -276,9 +279,15 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url)
   const chatId = searchParams.get("chatId") || searchParams.get("id")
   if (!chatId) {
-    return new Response("chatId or id query parameter is required", { status: 400 })
+    return new Response("chatId or id query parameter is required", {
+      status: 400,
+    })
   }
 
-  const history = await getMessagesByChatId(chatId)
-  return Response.json(history)
+  const game = await getGame(chatId)
+  if (!game) {
+    return new Response("Game not found", { status: 404 })
+  }
+
+  return Response.json(game.messages ?? [])
 }

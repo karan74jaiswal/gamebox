@@ -2,6 +2,8 @@
 
 import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
+import { and, eq } from "drizzle-orm"
+import { generateId, type UIMessage } from "ai"
 
 import { db, games, type Game } from "@/lib/db"
 
@@ -41,3 +43,28 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
 
   return newGame
 }
+
+export async function saveGameMessages(
+  gameId: string,
+  messages: UIMessage[],
+  orgId?: string | null
+): Promise<void> {
+  const effectiveOrgId = orgId !== undefined ? orgId : (await auth()).orgId
+
+  const sanitizedMessages = messages.map((m) =>
+    m.id && m.id.trim() !== "" ? m : { ...m, id: generateId() }
+  )
+
+  await db
+    .update(games)
+    .set({
+      messages: sanitizedMessages,
+      updatedAt: new Date(),
+    })
+    .where(
+      effectiveOrgId
+        ? and(eq(games.id, gameId), eq(games.orgId, effectiveOrgId))
+        : eq(games.id, gameId)
+    )
+}
+
