@@ -20,7 +20,7 @@ export const SUGGESTIONS: Suggestion[][] = [
     {
       label: "Voxel survival",
       prompt:
-        "Create a 3D voxel survival sandbox game with procedurally generated terrain, block gathering, tool crafting, and day-night survival cycles.",
+        "Create a 3D voxel survival gamebox game with procedurally generated terrain, block gathering, tool crafting, and day-night survival cycles.",
       icon: Pickaxe,
     },
     {
