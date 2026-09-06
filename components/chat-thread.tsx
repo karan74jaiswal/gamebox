@@ -2,6 +2,8 @@
 
 import * as React from "react"
 import Image from "next/image"
+import { useChat } from "@ai-sdk/react"
+import { DefaultChatTransport, type UIMessage } from "ai"
 
 import {
   MessageScrollerProvider,
@@ -16,59 +18,69 @@ import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { ChatComposer } from "@/components/chat-composer"
 import { cn } from "@/lib/utils"
 
-interface ChatMessage {
-  id: string
-  role: "user" | "assistant"
-  content: string
-}
-
-const MOCK_MESSAGES: ChatMessage[] = [
-  {
-    id: "1",
-    role: "user",
-    content:
-      "Build an open-world voxel survival game with procedural terrain, day/night cycles, and resource crafting.",
-  },
-  {
-    id: "2",
-    role: "assistant",
-    content:
-      "I've generated the initial 3D voxel gamebox world for you! Here's what has been set up:\n\n• Procedural Voxel Terrain: Multi-layered islands generated using simplex noise with grassy plains and stone caverns.\n• Dynamic Lighting: A directional sun with realistic shadows and an ambient day/night cycle skybox.\n• Mining & Physics: Raycasting block selection with instantaneous voxel destruction and drop animations.\n\nTake a look at the scene in the viewport. What would you like to build or refine next?",
-  },
-  {
-    id: "3",
-    role: "user",
-    content:
-      "Can we add water shaders with wave reflections around the islands, and allow the player to swim?",
-  },
-  {
-    id: "4",
-    role: "assistant",
-    content:
-      "Water physics and volumetric shaders have been integrated!\n\n• Three.js Water Mesh: Added realistic wave displacement with normal maps and dynamic sun reflection.\n• Buoyancy & Swimming: When entering water, gravity is reduced and swimming controls are enabled.\n• Underwater Fog: Added depth-tinted blue fog when the camera goes below the water plane.",
-  },
-  {
-    id: "5",
-    role: "user",
-    content:
-      "That looks fantastic! Can we add a HUD overlay with health hearts and an oxygen gauge when diving?",
-  },
-  {
-    id: "6",
-    role: "assistant",
-    content:
-      "Done! I've added a stylized HUD overlay in the top-left corner:\n\n• Health Meter: 10 heart containers that react to damage.\n• Oxygen Bubble Gauge: Appears when diving underwater, depleting gradually and bubbling back up when surfacing.\n\nYour game is running smoothly at 60 FPS in Three.js.",
-  },
-]
-
 export interface ChatThreadProps {
   id?: string
   className?: string
+  initialMessages?: UIMessage[]
+  initialPrompt?: string
+  initialModel?: string
 }
 
-export function ChatThread({ id, className }: ChatThreadProps) {
-  const sendMessage = (value: string) => {
-    console.log(`[ChatThread${id ? ` id=${id}` : ""}] sendMessage:`, value)
+export function ChatThread({
+  id,
+  className,
+  initialMessages,
+  initialPrompt,
+  initialModel,
+}: ChatThreadProps) {
+  const { messages, sendMessage, status, stop, error } = useChat({
+    id,
+    messages: initialMessages,
+    transport: new DefaultChatTransport({
+      api: "/api/chat",
+    }),
+  })
+
+  const hasSentInitialPrompt = React.useRef(false)
+
+  React.useEffect(() => {
+    if (initialPrompt && !hasSentInitialPrompt.current && messages.length === 0) {
+      hasSentInitialPrompt.current = true
+
+      // Clean up search params from the browser URL so refreshes don't re-trigger
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href)
+        url.searchParams.delete("prompt")
+        url.searchParams.delete("model")
+        window.history.replaceState(
+          {},
+          "",
+          url.pathname + (url.search ? url.search : "")
+        )
+      }
+
+      sendMessage(
+        { text: initialPrompt },
+        {
+          body: {
+            id,
+            model: initialModel,
+          },
+        }
+      )
+    }
+  }, [initialPrompt, initialModel, id, messages.length, sendMessage])
+
+  const handleSendMessage = (value: string, options?: { model?: string }) => {
+    sendMessage(
+      { text: value },
+      {
+        body: {
+          id,
+          model: options?.model,
+        },
+      }
+    )
   }
 
   return (
@@ -78,9 +90,40 @@ export function ChatThread({ id, className }: ChatThreadProps) {
           <MessageScroller className="size-full">
             <MessageScrollerViewport>
               <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-6 px-4 py-6">
-                {MOCK_MESSAGES.map((message, index) => {
+                {messages.length === 0 && status === "ready" && !initialPrompt && (
+                  <div className="flex h-full min-h-[300px] flex-col items-center justify-center text-center text-muted-foreground">
+                    <Image
+                      src="/logo.svg"
+                      alt="Gamebox"
+                      width={40}
+                      height={40}
+                      className="mb-4 opacity-50"
+                    />
+                    <p className="text-base font-medium text-foreground">
+                      What should we build for this game?
+                    </p>
+                    <p className="mt-1 text-sm max-w-sm">
+                      Describe the world, characters, rules, or mechanics you want to create.
+                    </p>
+                  </div>
+                )}
+
+                {messages.map((message, index) => {
                   const isAssistant = message.role === "assistant"
-                  const isLast = index === MOCK_MESSAGES.length - 1
+                  const isLast = index === messages.length - 1
+
+                  const textContent =
+                    message.parts && Array.isArray(message.parts)
+                      ? message.parts
+                          .filter((p) => p.type === "text")
+                          .map((p) => (p as { type: "text"; text: string }).text)
+                          .join("")
+                      : ""
+
+                  // If this is an assistant message currently streaming with no text yet, don't show empty bubble
+                  if (!textContent && isAssistant && (status === "streaming" || status === "submitted")) {
+                    return null
+                  }
 
                   return (
                     <MessageScrollerItem key={message.id} scrollAnchor={isLast}>
@@ -102,7 +145,7 @@ export function ChatThread({ id, className }: ChatThreadProps) {
                             align={isAssistant ? "start" : "end"}
                           >
                             <BubbleContent className="text-sm leading-relaxed whitespace-pre-line">
-                              {message.content}
+                              {textContent}
                             </BubbleContent>
                           </Bubble>
                         </MessageContent>
@@ -110,6 +153,48 @@ export function ChatThread({ id, className }: ChatThreadProps) {
                     </MessageScrollerItem>
                   )
                 })}
+
+                {(status === "submitted" ||
+                  (status === "streaming" &&
+                    messages.length > 0 &&
+                    messages[messages.length - 1].role === "user")) && (
+                  <MessageScrollerItem scrollAnchor>
+                    <Message align="start">
+                      <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
+                        <Image
+                          src="/logo.svg"
+                          alt="Assistant"
+                          width={32}
+                          height={32}
+                          className="size-8 animate-pulse"
+                        />
+                      </MessageAvatar>
+                      <MessageContent>
+                        <Bubble variant="ghost" align="start">
+                          <BubbleContent className="text-sm text-muted-foreground flex items-center gap-1.5 py-2">
+                            <span className="inline-block size-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
+                            <span className="inline-block size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:0.2s]" />
+                            <span className="inline-block size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:0.4s]" />
+                          </BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
+                )}
+
+                {error && (
+                  <MessageScrollerItem scrollAnchor>
+                    <Message align="start">
+                      <MessageContent>
+                        <Bubble variant="destructive" align="start">
+                          <BubbleContent className="text-sm">
+                            {error.message || "An error occurred while generating the response."}
+                          </BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
+                )}
               </MessageScrollerContent>
             </MessageScrollerViewport>
             <MessageScrollerButton />
@@ -120,7 +205,10 @@ export function ChatThread({ id, className }: ChatThreadProps) {
       <div className="mx-auto w-full max-w-3xl p-4">
         <ChatComposer
           placeholder="Ask a follow up or describe changes..."
-          sendMessage={sendMessage}
+          sendMessage={handleSendMessage}
+          status={status}
+          onStop={stop}
+          model={initialModel}
         />
       </div>
     </div>
