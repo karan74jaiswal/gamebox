@@ -1,18 +1,7 @@
 "use client"
 
 import * as React from "react"
-import {
-  Pickaxe,
-  Swords,
-  Zap,
-  Plane,
-  Crosshair,
-  Car,
-  Gamepad2,
-  Grip,
-  ChevronDown,
-  ArrowUp,
-} from "lucide-react"
+import { Grip, ChevronDown, ArrowUp } from "lucide-react"
 
 import {
   InputGroup,
@@ -26,36 +15,59 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
-import { Button } from "@/components/ui/button"
 import { createGame } from "@/lib/games/actions"
+import { cn } from "@/lib/utils"
 
-const SUGGESTIONS = [
-  [
-    { label: "Voxel survival", icon: Pickaxe },
-    { label: "Ink samurai duel", icon: Swords },
-    { label: "Comic-book firefight", icon: Zap },
-    { label: "Realistic battlefield", icon: Plane },
-  ],
-  [
-    { label: "Fight-first shooter", icon: Crosshair },
-    { label: "Jungle expedition drive", icon: Car },
-    { label: "Sunny kingdom platformer", icon: Gamepad2 },
-  ],
-]
+export interface ChatComposerProps {
+  input?: string
+  onInputChange?: (value: string) => void
+  value?: string
+  onChange?: (value: string) => void
+  placeholder?: string
+  className?: string
+}
 
-export function ChatComposer() {
-  const [prompt, setPrompt] = React.useState("")
+export function ChatComposer({
+  input: controlledInput,
+  onInputChange,
+  value: controlledValue,
+  onChange,
+  placeholder = "Describe the game you want to build...",
+  className,
+}: ChatComposerProps = {}) {
+  const [internalPrompt, setInternalPrompt] = React.useState("")
   const [model, setModel] = React.useState("Kimi K3")
   const [isPending, startTransition] = React.useTransition()
 
-  const handleCreate = (text?: string) => {
-    const title = (text ?? prompt).trim()
+  const isControlled =
+    controlledInput !== undefined || controlledValue !== undefined
+  const currentValue =
+    controlledInput !== undefined
+      ? controlledInput
+      : controlledValue !== undefined
+        ? controlledValue
+        : internalPrompt
+
+  const handleInputChange = (newValue: string) => {
+    if (!isControlled) {
+      setInternalPrompt(newValue)
+    }
+    onInputChange?.(newValue)
+    onChange?.(newValue)
+  }
+
+  const handleCreate = () => {
+    const title = currentValue.trim()
     if (!title || isPending) return
 
     startTransition(async () => {
       try {
         await createGame({ title })
-        setPrompt("")
+        if (!isControlled) {
+          setInternalPrompt("")
+        }
+        onInputChange?.("")
+        onChange?.("")
       } catch (error) {
         console.error("Failed to create game:", error)
       }
@@ -63,14 +75,14 @@ export function ChatComposer() {
   }
 
   return (
-    <div className="flex w-full flex-col gap-6">
+    <div className={cn("flex w-full flex-col gap-6", className)}>
       <InputGroup className="bg-popover">
         <InputGroupTextarea
           className="field-sizing-content max-h-48 min-h-10"
           rows={1}
-          placeholder="Describe the game you want to build..."
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          placeholder={placeholder}
+          value={currentValue}
+          onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
@@ -108,42 +120,15 @@ export function ChatComposer() {
             size="icon-sm"
             variant="default"
             className="rounded-full"
-            disabled={!prompt.trim() || isPending}
-            onClick={() => handleCreate()}
+            disabled={!currentValue.trim() || isPending}
+            onClick={handleCreate}
           >
             <ArrowUp />
           </InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
-
-      <div className="flex flex-col items-center gap-2">
-        {SUGGESTIONS.map((row, rowIndex) => (
-          <div
-            key={rowIndex}
-            className="flex flex-wrap items-center justify-center gap-2"
-          >
-            {row.map((suggestion) => {
-              const Icon = suggestion.icon
-              return (
-                <Button
-                  key={suggestion.label}
-                  variant="outline"
-                  size="sm"
-                  className="rounded-full font-normal text-muted-foreground hover:text-foreground"
-                  disabled={isPending}
-                  onClick={() => handleCreate(suggestion.label)}
-                >
-                  <Icon />
-                  <span>{suggestion.label}</span>
-                </Button>
-              )
-            })}
-          </div>
-        ))}
-      </div>
     </div>
   )
 }
 
 export default ChatComposer
-
