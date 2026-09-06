@@ -1,5 +1,6 @@
 "use client"
 
+import * as React from "react"
 import {
   Pickaxe,
   Swords,
@@ -26,6 +27,7 @@ import {
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
+import { createGame } from "@/lib/games/actions"
 
 const SUGGESTIONS = [
   [
@@ -42,6 +44,24 @@ const SUGGESTIONS = [
 ]
 
 export function ChatComposer() {
+  const [prompt, setPrompt] = React.useState("")
+  const [model, setModel] = React.useState("Kimi K3")
+  const [isPending, startTransition] = React.useTransition()
+
+  const handleCreate = (text?: string) => {
+    const title = (text ?? prompt).trim()
+    if (!title || isPending) return
+
+    startTransition(async () => {
+      try {
+        await createGame({ title })
+        setPrompt("")
+      } catch (error) {
+        console.error("Failed to create game:", error)
+      }
+    })
+  }
+
   return (
     <div className="flex w-full flex-col gap-6">
       <InputGroup className="bg-popover">
@@ -49,6 +69,15 @@ export function ChatComposer() {
           className="field-sizing-content max-h-48 min-h-10"
           rows={1}
           placeholder="Describe the game you want to build..."
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault()
+              handleCreate()
+            }
+          }}
+          disabled={isPending}
         />
         <InputGroupAddon align="block-end" className="justify-between">
           <DropdownMenu>
@@ -56,16 +85,22 @@ export function ChatComposer() {
               render={
                 <InputGroupButton variant="ghost">
                   <Grip />
-                  <span>Kimi K3</span>
+                  <span>{model}</span>
                   <ChevronDown />
                 </InputGroupButton>
               }
             />
             <DropdownMenuContent align="start">
-              <DropdownMenuItem>Kimi K3</DropdownMenuItem>
-              <DropdownMenuItem>Claude 3.7 Sonnet</DropdownMenuItem>
-              <DropdownMenuItem>Claude 3.5 Sonnet</DropdownMenuItem>
-              <DropdownMenuItem>GPT-4o</DropdownMenuItem>
+              {["Kimi K3", "Claude 3.7 Sonnet", "Claude 3.5 Sonnet", "GPT-4o"].map(
+                (item) => (
+                  <DropdownMenuItem
+                    key={item}
+                    onClick={() => setModel(item)}
+                  >
+                    {item}
+                  </DropdownMenuItem>
+                )
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -73,6 +108,8 @@ export function ChatComposer() {
             size="icon-sm"
             variant="default"
             className="rounded-full"
+            disabled={!prompt.trim() || isPending}
+            onClick={() => handleCreate()}
           >
             <ArrowUp />
           </InputGroupButton>
@@ -93,6 +130,8 @@ export function ChatComposer() {
                   variant="outline"
                   size="sm"
                   className="rounded-full font-normal text-muted-foreground hover:text-foreground"
+                  disabled={isPending}
+                  onClick={() => handleCreate(suggestion.label)}
                 >
                   <Icon />
                   <span>{suggestion.label}</span>
@@ -107,3 +146,4 @@ export function ChatComposer() {
 }
 
 export default ChatComposer
+
