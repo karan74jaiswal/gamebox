@@ -9,6 +9,7 @@ import { z } from "zod"
 
 import { resolveModel, DEFAULT_MODEL_ID } from "@/lib/ai/models"
 import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
+import { generateGameTitle } from "@/lib/games/title"
 import { db, games } from "@/lib/db"
 
 /**
@@ -235,6 +236,46 @@ export const gameChat = chat.agent({
         updatedAt: new Date(),
       })
       .where(eq(games.id, chatId))
+
+    // Only run title generation on the first user turn
+    const isFirstTurn =
+      uiMessages.filter((m) => m.role === "user").length === 1 &&
+      uiMessages.filter((m) => m.role === "assistant").length === 0
+
+    if (isFirstTurn) {
+      const firstUserMessage = uiMessages.find((m) => m.role === "user")
+      const textParts =
+        firstUserMessage && Array.isArray(firstUserMessage.parts)
+          ? firstUserMessage.parts.filter(
+              (p): p is { type: "text"; text: string } =>
+                p.type === "text" &&
+                typeof (p as { text?: unknown }).text === "string"
+            )
+          : []
+      const promptText = textParts.map((p) => p.text).join(" ").trim()
+
+      if (promptText) {
+        chat.defer(async () => {
+          const generatedTitle = await generateGameTitle(promptText)
+          if (generatedTitle) {
+            await db
+              .update(games)
+              .set({
+                title: generatedTitle,
+                updatedAt: new Date(),
+              })
+              .where(eq(games.id, chatId))
+
+            chat.response.write({
+              type: "data-game-title",
+              id: "game-title",
+              data: { id: chatId, title: generatedTitle },
+              transient: true,
+            })
+          }
+        })
+      }
+    }
   },
   onTurnComplete: async ({
     chatId,

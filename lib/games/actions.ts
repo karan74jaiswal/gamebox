@@ -1,11 +1,9 @@
 "use server"
 
-import { after } from "next/server"
 import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 import { and, eq } from "drizzle-orm"
-import { gateway, generateId, generateText, type UIMessage } from "ai"
-import { google } from "@ai-sdk/google"
+import { generateId, type UIMessage } from "ai"
 
 import { db, games, type Game } from "@/lib/db"
 
@@ -46,7 +44,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
     throw new Error("Unauthorized: Organization ID is required")
   }
 
-  // 1. Insert immediately with a quick initial title so client navigates in ~20ms
+  // 1. Insert immediately with a quick initial title so client navigates in ~10ms
   const initialTitle =
     promptText.length > 30 ? `${promptText.slice(0, 27)}...` : promptText
 
@@ -62,43 +60,6 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
   // Refresh app/(app)/layout.tsx server component layout tag
   revalidatePath("/", "layout")
 
-  // 2. Run AI title generation in the background out-of-band using after()
-  after(async () => {
-    try {
-      const model = process.env.AI_GATEWAY_API_KEY
-        ? gateway("google/gemini-2.5-flash")
-        : google("gemini-2.5-flash")
-
-      const { text } = await generateText({
-        model,
-        system:
-          "You are a creative game title generator. Generate a concise, catchy game title (2 to 5 words) for the provided game description. Output ONLY the title, with no quotes, markdown formatting, or ending punctuation.",
-        prompt: `Game description: ${promptText}`,
-      })
-
-      const generatedTitle = text
-        .trim()
-        .replace(/^["']|["']$/g, "")
-        .replace(/[.]+$/, "")
-        .trim()
-
-      if (generatedTitle) {
-        await db
-          .update(games)
-          .set({
-            title: generatedTitle,
-            updatedAt: new Date(),
-          })
-          .where(and(eq(games.id, newGame.id), eq(games.orgId, orgId)))
-
-        revalidatePath("/", "layout")
-      }
-    } catch (error) {
-      console.error("Background title generation failed:", error)
-    }
-  })
-
-  // 3. Return newGame immediately
   return newGame
 }
 

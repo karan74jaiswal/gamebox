@@ -3,7 +3,7 @@
 import * as React from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import {
   Coins,
   MessageSquareIcon,
@@ -27,6 +27,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Empty, EmptyDescription } from "@/components/ui/empty"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Popover,
   PopoverContent,
@@ -34,15 +35,166 @@ import {
   PopoverTitle,
   PopoverTrigger,
 } from "@/components/ui/popover"
-import type { Game } from "@/lib/db/schema"
+import { cn } from "@/lib/utils"
+import type { SidebarGame } from "@/lib/games/queries"
 
-interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
-  games?: Game[]
+export type { SidebarGame }
+
+export interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
+  games?: SidebarGame[]
+  gamesPromise?: Promise<SidebarGame[]>
 }
 
-export function AppSidebar({ games = [], ...props }: AppSidebarProps) {
+export function SidebarRecentsSkeleton() {
+  return (
+    <>
+      {/* Expanded view skeleton */}
+      <div className="group-data-[collapsible=icon]:hidden">
+        <SidebarMenu className="gap-1.5">
+          {["w-3/4", "w-5/6", "w-1/2", "w-2/3", "w-3/5"].map(
+            (widthClass, index) => (
+              <SidebarMenuItem key={index}>
+                <div className="flex h-8 w-full items-center gap-2 rounded-md px-2">
+                  <Skeleton className="size-4 shrink-0 rounded bg-muted/60" />
+                  <Skeleton className={cn("h-3.5 bg-muted/60", widthClass)} />
+                </div>
+              </SidebarMenuItem>
+            )
+          )}
+        </SidebarMenu>
+      </div>
+
+      {/* Collapsed view skeleton */}
+      <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
+        <SidebarMenuItem>
+          <div className="flex size-8 items-center justify-center rounded-md">
+            <Skeleton className="size-4 rounded bg-muted/60" />
+          </div>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </>
+  )
+}
+
+const EMPTY_GAMES: SidebarGame[] = []
+
+function SidebarRecentsList({
+  gamesPromise,
+  initialGames = EMPTY_GAMES,
+}: {
+  gamesPromise?: Promise<SidebarGame[]>
+  initialGames?: SidebarGame[]
+}) {
+  const resolved = gamesPromise ? React.use(gamesPromise) : initialGames
   const pathname = usePathname()
+  const router = useRouter()
   const [popoverOpen, setPopoverOpen] = React.useState(false)
+  const [titleOverrides, setTitleOverrides] = React.useState<
+    Record<string, string>
+  >({})
+
+  React.useEffect(() => {
+    const handleTitleUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ id?: string; title?: string }>
+      const { id, title } = customEvent.detail || {}
+      if (!id || !title) return
+
+      setTitleOverrides((prev) => ({ ...prev, [id]: title }))
+      router.refresh()
+    }
+
+    window.addEventListener("game-title-updated", handleTitleUpdate)
+    return () => {
+      window.removeEventListener("game-title-updated", handleTitleUpdate)
+    }
+  }, [router])
+
+  const gamesList = React.useMemo(() => {
+    return resolved.map((game) =>
+      titleOverrides[game.id]
+        ? { ...game, title: titleOverrides[game.id] }
+        : game
+    )
+  }, [resolved, titleOverrides])
+
+  return (
+    <>
+      {/* Expanded view */}
+      <div className="group-data-[collapsible=icon]:hidden">
+        {gamesList.length === 0 ? (
+          <Empty className="border border-dashed p-2">
+            <EmptyDescription className="text-xs">
+              Your games will live here.
+            </EmptyDescription>
+          </Empty>
+        ) : (
+          <SidebarMenu className="gap-1.5">
+            {gamesList.map((game) => (
+              <SidebarMenuItem key={game.id}>
+                <SidebarMenuButton
+                  isActive={pathname === `/games/${game.id}`}
+                  tooltip={game.title}
+                  render={<Link href={`/games/${game.id}`} />}
+                >
+                  <MessageSquareIcon />
+                  <span>{game.title}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ))}
+          </SidebarMenu>
+        )}
+      </div>
+
+      {/* Collapsed view with Popover */}
+      <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
+        <SidebarMenuItem>
+          <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
+            <PopoverTrigger
+              render={
+                <SidebarMenuButton tooltip="Recents">
+                  <MessageSquareIcon />
+                  <span>Recents</span>
+                </SidebarMenuButton>
+              }
+            />
+            <PopoverContent side="right" align="start" className="w-64 p-2">
+              <PopoverHeader>
+                <PopoverTitle className="text-xs font-semibold text-muted-foreground">
+                  Recents
+                </PopoverTitle>
+              </PopoverHeader>
+              {gamesList.length === 0 ? (
+                <Empty className="border border-dashed p-2">
+                  <EmptyDescription className="text-xs">
+                    Your games will live here.
+                  </EmptyDescription>
+                </Empty>
+              ) : (
+                <SidebarMenu className="max-h-80 gap-1.5 overflow-y-auto">
+                  {gamesList.map((game) => (
+                    <SidebarMenuItem key={game.id}>
+                      <SidebarMenuButton
+                        isActive={pathname === `/games/${game.id}`}
+                        render={<Link href={`/games/${game.id}`} />}
+                        onClick={() => setPopoverOpen(false)}
+                      >
+                        <MessageSquareIcon />
+                        <span>{game.title}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ))}
+                </SidebarMenu>
+              )}
+            </PopoverContent>
+          </Popover>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    </>
+  )
+}
+
+export function AppSidebar({ games, gamesPromise, ...props }: AppSidebarProps) {
+  const pathname = usePathname()
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -86,80 +238,12 @@ export function AppSidebar({ games = [], ...props }: AppSidebarProps) {
         <SidebarGroup>
           <SidebarGroupLabel>Recents</SidebarGroupLabel>
           <SidebarGroupContent>
-            {/* Expanded view */}
-            <div className="group-data-[collapsible=icon]:hidden">
-              {games.length === 0 ? (
-                <Empty className="border border-dashed p-2">
-                  <EmptyDescription className="text-xs">
-                    Your games will live here.
-                  </EmptyDescription>
-                </Empty>
-              ) : (
-                <SidebarMenu className="gap-1.5">
-                  {games.map((game) => (
-                    <SidebarMenuItem key={game.id}>
-                      <SidebarMenuButton
-                        isActive={pathname === `/games/${game.id}`}
-                        tooltip={game.title}
-                        render={<Link href={`/games/${game.id}`} />}
-                      >
-                        <MessageSquareIcon />
-                        <span>{game.title}</span>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              )}
-            </div>
-
-            {/* Collapsed view with Popover */}
-            <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
-              <SidebarMenuItem>
-                <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
-                  <PopoverTrigger
-                    render={
-                      <SidebarMenuButton tooltip="Recents">
-                        <MessageSquareIcon />
-                        <span>Recents</span>
-                      </SidebarMenuButton>
-                    }
-                  />
-                  <PopoverContent
-                    side="right"
-                    align="start"
-                    className="w-64 p-2"
-                  >
-                    <PopoverHeader>
-                      <PopoverTitle className="text-xs font-semibold text-muted-foreground">
-                        Recents
-                      </PopoverTitle>
-                    </PopoverHeader>
-                    {games.length === 0 ? (
-                      <Empty className="border border-dashed p-2">
-                        <EmptyDescription className="text-xs">
-                          Your games will live here.
-                        </EmptyDescription>
-                      </Empty>
-                    ) : (
-                      <SidebarMenu className="max-h-80 gap-1.5 overflow-y-auto">
-                        {games.map((game) => (
-                          <SidebarMenuItem key={game.id}>
-                            <SidebarMenuButton
-                              isActive={pathname === `/games/${game.id}`}
-                              render={<Link href={`/games/${game.id}`} />}
-                              onClick={() => setPopoverOpen(false)}
-                            >
-                              <MessageSquareIcon />
-                              <span>{game.title}</span>
-                            </SidebarMenuButton>
-                          </SidebarMenuItem>
-                        ))}
-                      </SidebarMenu>
-                    )}
-                  </PopoverContent>
-                </Popover>
-              </SidebarMenuItem>
-            </SidebarMenu>
+            <React.Suspense fallback={<SidebarRecentsSkeleton />}>
+              <SidebarRecentsList
+                gamesPromise={gamesPromise}
+                initialGames={games}
+              />
+            </React.Suspense>
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>

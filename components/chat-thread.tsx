@@ -91,6 +91,23 @@ export function ChatThread({
     messages: initialMessages,
     transport,
     resume: false,
+    onData: (dataPart) => {
+      const part = dataPart as { type?: string; data?: unknown }
+      if (
+        part.type === "data-game-title" &&
+        typeof part.data === "object" &&
+        part.data !== null
+      ) {
+        const payload = part.data as { id?: string; title?: string }
+        if (payload.title) {
+          window.dispatchEvent(
+            new CustomEvent("game-title-updated", {
+              detail: { id: payload.id || id, title: payload.title },
+            })
+          )
+        }
+      }
+    },
   })
 
   const handleStop = React.useCallback(() => {

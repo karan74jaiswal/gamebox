@@ -24,7 +24,9 @@ export async function getGame(id: string): Promise<Game | null> {
   return game ?? null
 }
 
-export async function listGames(): Promise<Game[]> {
+export type SidebarGame = Pick<Game, "id" | "title">
+
+export async function listGames(): Promise<SidebarGame[]> {
   const { orgId } = await auth()
 
   if (!orgId) {
@@ -32,7 +34,10 @@ export async function listGames(): Promise<Game[]> {
   }
 
   return await db
-    .select()
+    .select({
+      id: games.id,
+      title: games.title,
+    })
     .from(games)
     .where(eq(games.orgId, orgId))
     .orderBy(desc(games.createdAt))
