@@ -2,7 +2,7 @@ import { notFound } from "next/navigation"
 import { auth } from "@clerk/nextjs/server"
 import type { UIMessage } from "ai"
 
-import { ChatThread } from "@/components/chat-thread"
+import { GameChat } from "@/components/game-chat"
 import { getGame } from "@/lib/games/queries"
 import { mintChatAccessToken } from "@/app/actions"
 
@@ -38,7 +38,7 @@ export default async function GamePage({ params, searchParams }: GamePageProps) 
 
   return (
     <div className="flex h-svh flex-col overflow-hidden">
-      <ChatThread
+      <GameChat
         id={id}
         initialMessages={initialMessages}
         initialPrompt={prompt}
