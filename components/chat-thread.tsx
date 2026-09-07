@@ -9,7 +9,7 @@ import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
 import type { gameChat } from "@/trigger/chat"
 import { mintChatAccessToken, startChatSession } from "@/app/actions"
 import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
-import { sanitizeErrorMessage } from "@/lib/ai/errors"
+import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
 
 import {
   MessageScrollerProvider,
@@ -98,7 +98,30 @@ export function ChatThread({
       void transport.stopGeneration(id)
     }
     stop()
-  }, [id, transport, stop])
+    clearError()
+    setMessages((prev) => {
+      const last = prev[prev.length - 1]
+      if (last && last.role === "assistant") {
+        const textParts =
+          last.parts && Array.isArray(last.parts)
+            ? last.parts.filter(
+                (p): p is { type: "text"; text: string } =>
+                  p.type === "text" &&
+                  typeof (p as { text?: unknown }).text === "string"
+              )
+            : []
+        const hasText = textParts.some((p) => p.text.trim().length > 0)
+        const hasNonTextParts =
+          last.parts &&
+          Array.isArray(last.parts) &&
+          last.parts.some((p) => p.type !== "text")
+        if (!hasText && !hasNonTextParts) {
+          return prev.slice(0, -1)
+        }
+      }
+      return prev
+    })
+  }, [id, transport, stop, clearError, setMessages])
 
   const hasSentInitialPrompt = React.useRef(false)
 
@@ -145,7 +168,7 @@ export function ChatThread({
       setSelectedModel(options.model)
     }
 
-    if (error && messages.length > 0) {
+    if (error && !isAbortError(error) && messages.length > 0) {
       const lastMsg = messages[messages.length - 1]
       const errorText = sanitizeErrorMessage(error.message || error)
       if (lastMsg.role === "user") {
@@ -415,6 +438,7 @@ export function ChatThread({
           sendMessage={handleSendMessage}
           status={status}
           onStop={handleStop}
+          onCancel={handleStop}
           model={selectedModel}
           onModelChange={setSelectedModel}
         />

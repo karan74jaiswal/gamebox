@@ -8,7 +8,7 @@ import { eq } from "drizzle-orm"
 import { z } from "zod"
 
 import { resolveModel, DEFAULT_MODEL_ID } from "@/lib/ai/models"
-import { sanitizeErrorMessage } from "@/lib/ai/errors"
+import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
 import { db, games } from "@/lib/db"
 
 /**
@@ -217,6 +217,10 @@ export const gameChat = chat.agent({
   },
   uiMessageStreamOptions: {
     onError: (error) => {
+      if (isAbortError(error) || chat.isStopped()) {
+        locals.set(streamErrorKey, undefined)
+        return ""
+      }
       const message = sanitizeErrorMessage(error)
       locals.set(streamErrorKey, message)
       return message
@@ -239,28 +243,48 @@ export const gameChat = chat.agent({
     clientData,
     error,
     finishReason,
+    stopped,
   }) => {
     const finalMessages = [...uiMessages]
     const streamError = locals.get(streamErrorKey)
     locals.set(streamErrorKey, undefined)
 
-    const isFailedTurn = Boolean(error) || finishReason === "error"
+    const wasStopped =
+      Boolean(stopped) ||
+      chat.isStopped() ||
+      isAbortError(error)
+
+    const isFailedTurn =
+      !wasStopped && (Boolean(error) || finishReason === "error")
 
     const lastIdx = finalMessages.length - 1
     const lastMsg = lastIdx >= 0 ? finalMessages[lastIdx] : undefined
 
-    const textParts =
+    const hasContent =
       lastMsg && Array.isArray(lastMsg.parts)
-        ? lastMsg.parts.filter(
-            (p): p is { type: "text"; text: string } =>
-              p.type === "text" &&
-              typeof (p as { text?: unknown }).text === "string"
-          )
-        : []
-    const hasText = textParts.some((p) => p.text.trim().length > 0)
+        ? lastMsg.parts.some((p) => {
+            if (p.type === "text")
+              return (
+                typeof (p as { text?: unknown }).text === "string" &&
+                (p as { text: string }).text.trim().length > 0
+              )
+            if (p.type === "reasoning")
+              return (
+                typeof (p as { text?: unknown }).text === "string" &&
+                (p as { text: string }).text.trim().length > 0
+              )
+            return true
+          })
+        : false
 
-    // A turn needs error handling if an explicit error occurred OR if the assistant ended with no text
-    if (isFailedTurn || (lastMsg?.role === "assistant" && !hasText)) {
+    if (wasStopped) {
+      // If user stopped/cancelled the turn:
+      // If the assistant message has no meaningful content, remove it so only the user message remains
+      // If the assistant message has partial content, preserve it cleanly (no error banner/metadata)
+      if (lastMsg?.role === "assistant" && !hasContent) {
+        finalMessages.pop()
+      }
+    } else if (isFailedTurn || (lastMsg?.role === "assistant" && !hasContent)) {
       const sanitizedError = sanitizeErrorMessage(
         error ||
           streamError ||

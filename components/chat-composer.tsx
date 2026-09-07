@@ -38,6 +38,7 @@ export interface ChatComposerProps {
   disabled?: boolean
   status?: string
   onStop?: () => void
+  onCancel?: () => void
   model?: string
   onModelChange?: (model: string) => void
 }
@@ -52,6 +53,7 @@ export function ChatComposer({
   disabled = false,
   status,
   onStop,
+  onCancel,
   model: controlledModel,
   onModelChange,
 }: ChatComposerProps = {}) {
@@ -77,6 +79,7 @@ export function ChatComposer({
   }
 
   const isStreaming = status === "streaming" || status === "submitted"
+  const handleCancel = onCancel || onStop
 
   const isControlled = controlledInput !== undefined
   const currentValue =
@@ -136,6 +139,9 @@ export function ChatComposer({
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
               if (!isStreaming) handleSubmit()
+            } else if (e.key === "Escape" && isStreaming && handleCancel) {
+              e.preventDefault()
+              handleCancel()
             }
           }}
           disabled={isPending || disabled}
@@ -177,13 +183,13 @@ export function ChatComposer({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {isStreaming && onStop ? (
+          {isStreaming && handleCancel ? (
             <InputGroupButton
               size="icon-sm"
               variant="default"
               className="rounded-full"
-              onClick={onStop}
-              title="Stop generating"
+              onClick={handleCancel}
+              title="Cancel generation"
             >
               <Square className="size-3.5 fill-current" />
             </InputGroupButton>

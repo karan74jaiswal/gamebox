@@ -1,10 +1,36 @@
 /**
+ * Checks if an error represents an intentional cancellation / abort.
+ */
+export function isAbortError(error: unknown): boolean {
+  if (!error) return false
+  if (error instanceof Error) {
+    if (error.name === "AbortError" || error.name === "CancellationError") return true
+    const msg = error.message.toLowerCase()
+    return msg.includes("aborted") || msg.includes("abort") || msg.includes("cancel")
+  }
+  if (typeof error === "string") {
+    const lower = error.toLowerCase()
+    return lower.includes("aborted") || lower.includes("abort") || lower.includes("cancel")
+  }
+  if (typeof error === "object" && "message" in (error as Record<string, unknown>)) {
+    const msg = String((error as Record<string, unknown>).message).toLowerCase()
+    return msg.includes("aborted") || msg.includes("abort") || msg.includes("cancel")
+  }
+  return false
+}
+
+/**
  * Sanitizes model and provider errors into friendly, non-technical plain English messages.
  * Prevents technical jargon, stack traces, HTTP codes, and API keys from leaking to users.
  */
 export function sanitizeErrorMessage(error: unknown): string {
   if (!error) {
     return "The model failed to generate a response. Please try again or select a different model."
+  }
+
+  // Cancellation / Aborted
+  if (isAbortError(error)) {
+    return "Generation was cancelled."
   }
 
   const raw =
