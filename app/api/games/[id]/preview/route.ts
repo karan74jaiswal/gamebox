@@ -4,6 +4,7 @@ import {
   startGameServer,
 } from "@/lib/daytona/utils"
 import { getGame } from "@/lib/games/queries"
+import { setCachedPreviewUrl } from "./live/[[...path]]/route"
 
 /**
  * The url a game's preview iframe loads.
@@ -12,9 +13,9 @@ import { getGame } from "@/lib/games/queries"
  * server up: `startGameServer` reuses whatever is already running, and only
  * pays the start-up cost on the first load after a sandbox has gone idle.
  *
- * The url is signed rather than the standard token-authenticated preview link,
- * because it is loaded in an iframe, which cannot send the
- * `x-daytona-preview-token` header the standard link requires.
+ * The url returned is our internal live proxy (/api/games/[id]/preview/live/)
+ * which sends the X-Daytona-Skip-Preview-Warning header to bypass Daytona's
+ * preview warning screen and allows custom scrollbar styling in the iframe.
  *
  * `getGame` resolves the organization from the session and scopes the lookup to
  * it, so a game belonging to another org — or a caller with no session at all —
@@ -44,7 +45,12 @@ export async function GET(
       PREVIEW_URL_TTL_SECONDS
     )
 
-    return Response.json({ url })
+    setCachedPreviewUrl(game.sandboxId, url, PREVIEW_URL_TTL_SECONDS)
+
+    return Response.json({
+      url: `/api/games/${id}/preview/live/`,
+      externalUrl: url,
+    })
   } catch (error) {
     console.error("Failed to generate preview URL:", error)
     const message =

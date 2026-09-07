@@ -43,6 +43,22 @@ export function GameChat({
     }
   }, [props.id])
 
+  const [isOpening, setIsOpening] = React.useState(false)
+  const prevSandboxIdRef = React.useRef(sandboxId)
+
+  React.useEffect(() => {
+    // Detect first-time arrival of sandboxId (was null, now has value)
+    if (!prevSandboxIdRef.current && sandboxId) {
+      setIsOpening(true)
+      const timer = setTimeout(() => {
+        setIsOpening(false)
+      }, 5000)
+
+      return () => clearTimeout(timer)
+    }
+    prevSandboxIdRef.current = sandboxId
+  }, [sandboxId])
+
   React.useEffect(() => {
     if (sandboxId && groupRef.current) {
       requestAnimationFrame(() => {
@@ -65,17 +81,26 @@ export function GameChat({
         id="chat"
         defaultSize={sandboxId ? 50 : 100}
         minSize={30}
+        className={cn(
+          isOpening && "transition-[flex-grow] duration-[5000ms] ease-in-out"
+        )}
       >
         <ChatThread {...props} onSandboxReady={setSandboxId} />
       </ResizablePanel>
       {sandboxId && (
         <>
-          <ResizableHandle withHandle />
+          <ResizableHandle
+            withHandle
+            className={cn(isOpening && "transition-opacity duration-1000")}
+          />
           <ResizablePanel
             id="preview"
             defaultSize={50}
             minSize={30}
-            className="flex h-full flex-col overflow-hidden"
+            className={cn(
+              "flex h-full flex-col overflow-hidden",
+              isOpening && "transition-[flex-grow] duration-[5000ms] ease-in-out"
+            )}
           >
             <ChatPreview
               gameId={props.id}

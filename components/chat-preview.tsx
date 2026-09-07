@@ -126,7 +126,7 @@ export function ChatPreview({
   return (
     <div
       className={cn(
-        "flex h-full w-full flex-col overflow-hidden bg-background text-foreground",
+        "flex h-full w-full flex-col overflow-hidden bg-background text-foreground animate-in fade-in-50 duration-700",
         className
       )}
     >
