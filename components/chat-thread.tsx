@@ -33,6 +33,7 @@ export interface ChatThreadProps {
   initialModel?: string
   initialLastEventId?: string
   initialPublicAccessToken?: string
+  onSandboxReady?: (sandboxId: string) => void
 }
 
 export function ChatThread({
@@ -43,6 +44,7 @@ export function ChatThread({
   initialModel,
   initialLastEventId,
   initialPublicAccessToken,
+  onSandboxReady,
 }: ChatThreadProps) {
   const [selectedModel, setSelectedModel] = React.useState<string>(
     initialModel || DEFAULT_MODEL_ID
@@ -103,6 +105,21 @@ export function ChatThread({
           window.dispatchEvent(
             new CustomEvent("game-title-updated", {
               detail: { id: payload.id || id, title: payload.title },
+            })
+          )
+        }
+      }
+      if (
+        part.type === "data-game-sandbox" &&
+        typeof part.data === "object" &&
+        part.data !== null
+      ) {
+        const payload = part.data as { id?: string; sandboxId?: string }
+        if (payload.sandboxId) {
+          onSandboxReady?.(payload.sandboxId)
+          window.dispatchEvent(
+            new CustomEvent("game-sandbox-updated", {
+              detail: { id: payload.id || id, sandboxId: payload.sandboxId },
             })
           )
         }

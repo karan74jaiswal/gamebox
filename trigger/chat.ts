@@ -11,7 +11,7 @@ import { resolveModel, DEFAULT_MODEL_ID } from "@/lib/ai/models"
 import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
 import { generateGameTitle } from "@/lib/games/title"
 import { db, games } from "@/lib/db"
-import { createGameSandbox } from "@/lib/daytona/utils"
+import { getGameSandbox } from "@/lib/daytona/utils"
 
 /**
  * Resolves the language model based on provider or model identifier,
@@ -217,8 +217,14 @@ export const gameChat = chat.agent({
 
     return stored
   },
-  onChatStart: async ({ chatId }) => {
-    await createGameSandbox(chatId)
+  onChatStart: async ({ chatId, writer }) => {
+    const sandbox = await getGameSandbox(chatId)
+    writer.write({
+      type: "data-game-sandbox",
+      id: "game-sandbox",
+      data: { id: chatId, sandboxId: sandbox.id },
+      transient: true,
+    })
   },
   uiMessageStreamOptions: {
     onError: (error) => {
@@ -231,6 +237,7 @@ export const gameChat = chat.agent({
       return message
     },
   },
+
   onTurnStart: async ({ chatId, uiMessages, clientData }) => {
     await db
       .update(games)

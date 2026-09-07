@@ -100,7 +100,7 @@ function SidebarRecentsList({
       if (!id || !title) return
 
       setTitleOverrides((prev) => ({ ...prev, [id]: title }))
-      router.refresh()
+      // router.refresh()
     }
 
     window.addEventListener("game-title-updated", handleTitleUpdate)

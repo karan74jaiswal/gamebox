@@ -45,6 +45,7 @@ export default async function GamePage({ params, searchParams }: GamePageProps) 
         initialModel={initialModel}
         initialLastEventId={game.lastEventId ?? undefined}
         initialPublicAccessToken={initialPublicAccessToken}
+        initialSandboxId={game.sandboxId}
       />
     </div>
   )
