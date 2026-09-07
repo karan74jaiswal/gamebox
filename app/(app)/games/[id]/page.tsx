@@ -39,6 +39,7 @@ export default async function GamePage({ params, searchParams }: GamePageProps) 
   return (
     <div className="flex h-svh flex-col overflow-hidden">
       <GameChat
+        key={id}
         id={id}
         initialMessages={initialMessages}
         initialPrompt={prompt}

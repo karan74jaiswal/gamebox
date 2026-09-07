@@ -37,8 +37,8 @@ export function ChatPreview({
   const effectiveGameId = gameId || id || (params?.id as string | undefined)
 
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null)
-  const [isLoading, setIsLoading] = React.useState(true)
-  const [isIframeLoading, setIsIframeLoading] = React.useState(false)
+  const [isIframeLoaded, setIsIframeLoaded] = React.useState(false)
+  const [isReloading, setIsReloading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [iframeKey, setIframeKey] = React.useState(0)
   const iframeRef = React.useRef<HTMLIFrameElement>(null)
@@ -46,18 +46,15 @@ export function ChatPreview({
   const fetchPreviewUrl = React.useCallback(
     async (signal?: AbortSignal) => {
       if (!effectiveGameId) {
-        setIsLoading(false)
         return
       }
-
-      setIsLoading(true)
-      setError(null)
 
       try {
         const response = await fetch(`/api/games/${effectiveGameId}/preview`, {
           signal,
         })
         const data = await response.json()
+        setError(null)
 
         if (!response.ok) {
           if (response.status === 409) {
@@ -76,16 +73,11 @@ export function ChatPreview({
         }
 
         setPreviewUrl(data.url)
-        setIsIframeLoading(true)
       } catch (err: unknown) {
         if (signal?.aborted) return
         const message =
           err instanceof Error ? err.message : "Failed to load game preview."
         setError(message)
-      } finally {
-        if (!signal?.aborted) {
-          setIsLoading(false)
-        }
       }
     },
     [effectiveGameId]
@@ -106,7 +98,7 @@ export function ChatPreview({
   }, [effectiveGameId, sandboxId, fetchPreviewUrl])
 
   const handleReloadIframe = React.useCallback(() => {
-    setIsIframeLoading(true)
+    setIsReloading(true)
     if (iframeRef.current && previewUrl) {
       try {
         iframeRef.current.src = previewUrl
@@ -139,7 +131,7 @@ export function ChatPreview({
           </span>
 
           {/* Status badge */}
-          {isLoading ? (
+          {!isIframeLoaded && !error ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
               <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
               Starting
@@ -149,7 +141,7 @@ export function ChatPreview({
               <span className="size-1.5 rounded-full bg-destructive" />
               Offline
             </span>
-          ) : previewUrl ? (
+          ) : isIframeLoaded ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
               <span className="size-1.5 rounded-full bg-emerald-500" />
               Live
@@ -171,7 +163,12 @@ export function ChatPreview({
                     />
                   }
                 >
-                  <RotateCw className="size-3.5 text-muted-foreground transition-transform hover:text-foreground active:rotate-180" />
+                  <RotateCw
+                    className={cn(
+                      "size-3.5 text-muted-foreground transition-transform hover:text-foreground",
+                      isReloading && "animate-spin text-foreground"
+                    )}
+                  />
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Reload preview</TooltipContent>
               </Tooltip>
@@ -216,9 +213,10 @@ export function ChatPreview({
       </div>
 
       {/* Main preview body */}
-      <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-muted/10">
-        {isLoading ? (
-          <div className="flex animate-in flex-col items-center justify-center gap-3 p-6 text-center duration-300 fade-in-50">
+      <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-background">
+        {/* Single unified loader: stays visible until iframe actually fires onLoad */}
+        {!isIframeLoaded && !error && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-6 text-center animate-in fade-in-50 duration-300">
             <div className="flex size-12 items-center justify-center rounded-2xl border border-border/60 bg-primary/5 text-primary shadow-xs">
               <Spinner className="size-6 text-primary" />
             </div>
@@ -232,7 +230,9 @@ export function ChatPreview({
               </p>
             </div>
           </div>
-        ) : error ? (
+        )}
+
+        {error ? (
           <div className="flex max-w-sm animate-in flex-col items-center justify-center gap-3 p-6 text-center duration-300 fade-in-50">
             <div className="flex size-12 items-center justify-center rounded-2xl border border-destructive/20 bg-destructive/10 text-destructive">
               <AlertCircle className="size-6" />
@@ -256,21 +256,22 @@ export function ChatPreview({
             </Button>
           </div>
         ) : previewUrl ? (
-          <div className="relative h-full w-full flex-1 bg-white">
-            {isIframeLoading && (
-              <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/40 backdrop-blur-xs transition-opacity duration-200">
-                <Spinner className="size-6 text-primary" />
-              </div>
-            )}
+          <div className="relative h-full w-full flex-1 bg-background">
             <iframe
               ref={iframeRef}
               key={iframeKey}
               src={previewUrl}
               title="Game Preview"
-              className="h-full w-full border-0 bg-white"
+              className={cn(
+                "h-full w-full border-0 bg-background transition-opacity duration-300",
+                isIframeLoaded ? "opacity-100" : "opacity-0"
+              )}
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
-              onLoad={() => setIsIframeLoading(false)}
+              onLoad={() => {
+                setIsIframeLoaded(true)
+                setIsReloading(false)
+              }}
             />
           </div>
         ) : null}

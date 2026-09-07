@@ -26,10 +26,6 @@ export function GameChat({
   const groupRef = React.useRef<GroupImperativeHandle>(null)
 
   React.useEffect(() => {
-    setSandboxId(initialSandboxId ?? null)
-  }, [props.id, initialSandboxId])
-
-  React.useEffect(() => {
     const handleSandboxUpdate = (e: Event) => {
       const detail = (e as CustomEvent<{ id?: string; sandboxId?: string }>).detail
       if (detail?.sandboxId && (!detail.id || detail.id === props.id)) {
@@ -43,33 +39,77 @@ export function GameChat({
     }
   }, [props.id])
 
-  const [isOpening, setIsOpening] = React.useState(false)
-  const prevSandboxIdRef = React.useRef(sandboxId)
+  const [isOpening, setIsOpening] = React.useState(Boolean(initialSandboxId))
+  const animatedRef = React.useRef(false)
+  const animationFrameRef = React.useRef<number | null>(null)
 
-  React.useEffect(() => {
-    // Detect first-time arrival of sandboxId (was null, now has value)
-    if (!prevSandboxIdRef.current && sandboxId) {
-      setIsOpening(true)
-      const timer = setTimeout(() => {
+  const startExpansionAnimation = React.useCallback(() => {
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current)
+    }
+
+    setIsOpening(true)
+    const DURATION = 1500 // 1.5s smooth transition
+    let startTime: number | null = null
+
+    const animate = (currentTime: number) => {
+      if (!groupRef.current) {
+        animationFrameRef.current = requestAnimationFrame(animate)
+        return
+      }
+
+      if (startTime === null) {
+        startTime = currentTime
+      }
+
+      const elapsed = currentTime - startTime
+      const progress = Math.min(elapsed / DURATION, 1)
+
+      // Smooth cubic ease-out curve
+      const easeOut = 1 - Math.pow(1 - progress, 3)
+      const previewSize = Math.round(easeOut * 50 * 10) / 10
+      const chatSize = Math.round((100 - previewSize) * 10) / 10
+
+      try {
+        groupRef.current.setLayout({ chat: chatSize, preview: previewSize })
+      } catch {
+        // Ignore if unmounted
+      }
+
+      if (progress < 1) {
+        animationFrameRef.current = requestAnimationFrame(animate)
+      } else {
         setIsOpening(false)
-      }, 5000)
-
-      return () => clearTimeout(timer)
+        try {
+          groupRef.current.setLayout({ chat: 50, preview: 50 })
+        } catch {
+          // Ignore if unmounted
+        }
+      }
     }
-    prevSandboxIdRef.current = sandboxId
-  }, [sandboxId])
+
+    animationFrameRef.current = requestAnimationFrame(animate)
+  }, [])
 
   React.useEffect(() => {
-    if (sandboxId && groupRef.current) {
-      requestAnimationFrame(() => {
-        try {
-          groupRef.current?.setLayout({ chat: 50, preview: 50 })
-        } catch {
-          // Ignore if layout is already active or panel registration is pending
-        }
+    // Animate whenever sandboxId is present (on navigation or when newly created)
+    if (sandboxId && !animatedRef.current) {
+      animatedRef.current = true
+      const frame = requestAnimationFrame(() => {
+        startExpansionAnimation()
       })
+      return () => {
+        cancelAnimationFrame(frame)
+        animatedRef.current = false
+      }
     }
-  }, [sandboxId])
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current)
+      }
+    }
+  }, [sandboxId, startExpansionAnimation])
 
   return (
     <ResizablePanelGroup
@@ -79,37 +119,39 @@ export function GameChat({
     >
       <ResizablePanel
         id="chat"
-        defaultSize={sandboxId ? 50 : 100}
+        defaultSize={100}
         minSize={30}
-        className={cn(
-          isOpening && "transition-[flex-grow] duration-[5000ms] ease-in-out"
-        )}
       >
         <ChatThread {...props} onSandboxReady={setSandboxId} />
       </ResizablePanel>
-      {sandboxId && (
-        <>
-          <ResizableHandle
-            withHandle
-            className={cn(isOpening && "transition-opacity duration-1000")}
+
+      <ResizableHandle
+        withHandle
+        className={cn(
+          !sandboxId && "hidden pointer-events-none",
+          isOpening && "transition-opacity duration-700"
+        )}
+      />
+
+      <ResizablePanel
+        id="preview"
+        defaultSize={0}
+        minSize={!sandboxId || isOpening ? 0 : 30}
+        collapsible={true}
+        collapsedSize={0}
+        className={cn(
+          "flex h-full flex-col overflow-hidden",
+          !sandboxId && "hidden"
+        )}
+      >
+        {sandboxId && (
+          <ChatPreview
+            gameId={props.id}
+            sandboxId={sandboxId}
+            className="h-full w-full"
           />
-          <ResizablePanel
-            id="preview"
-            defaultSize={50}
-            minSize={30}
-            className={cn(
-              "flex h-full flex-col overflow-hidden",
-              isOpening && "transition-[flex-grow] duration-[5000ms] ease-in-out"
-            )}
-          >
-            <ChatPreview
-              gameId={props.id}
-              sandboxId={sandboxId}
-              className="h-full w-full"
-            />
-          </ResizablePanel>
-        </>
-      )}
+        )}
+      </ResizablePanel>
     </ResizablePanelGroup>
   )
 }
