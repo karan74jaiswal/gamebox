@@ -4,6 +4,7 @@ import type { UIMessage } from "ai"
 
 import { ChatThread } from "@/components/chat-thread"
 import { getGame } from "@/lib/games/queries"
+import { mintChatAccessToken } from "@/app/actions"
 
 interface GamePageProps {
   params: Promise<{
@@ -26,6 +27,14 @@ export default async function GamePage({ params, searchParams }: GamePageProps) 
 
   const { prompt, model } = await searchParams
   const initialMessages: UIMessage[] = (game.messages as UIMessage[]) ?? []
+  const initialModel = model || game.model || undefined
+
+  let initialPublicAccessToken: string | undefined
+  try {
+    initialPublicAccessToken = await mintChatAccessToken(id)
+  } catch (error) {
+    console.error("Failed to mint initial chat access token:", error)
+  }
 
   return (
     <div className="flex h-svh flex-col overflow-hidden">
@@ -33,8 +42,11 @@ export default async function GamePage({ params, searchParams }: GamePageProps) 
         id={id}
         initialMessages={initialMessages}
         initialPrompt={prompt}
-        initialModel={model}
+        initialModel={initialModel}
+        initialLastEventId={game.lastEventId ?? undefined}
+        initialPublicAccessToken={initialPublicAccessToken}
       />
     </div>
   )
 }
+

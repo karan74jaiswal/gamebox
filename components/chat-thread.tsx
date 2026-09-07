@@ -3,7 +3,13 @@
 import * as React from "react"
 import Image from "next/image"
 import { useChat } from "@ai-sdk/react"
-import { DefaultChatTransport, type UIMessage } from "ai"
+import type { UIMessage } from "ai"
+import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
+
+import type { gameChat } from "@/trigger/chat"
+import { mintChatAccessToken, startChatSession } from "@/app/actions"
+import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
+import { sanitizeErrorMessage } from "@/lib/ai/errors"
 
 import {
   MessageScrollerProvider,
@@ -15,6 +21,7 @@ import {
 } from "@/components/ui/message-scroller"
 import { Message, MessageAvatar, MessageContent } from "@/components/ui/message"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
+import { Markdown } from "@/components/ui/markdown"
 import { ChatComposer } from "@/components/chat-composer"
 import { cn } from "@/lib/utils"
 
@@ -24,6 +31,8 @@ export interface ChatThreadProps {
   initialMessages?: UIMessage[]
   initialPrompt?: string
   initialModel?: string
+  initialLastEventId?: string
+  initialPublicAccessToken?: string
 }
 
 export function ChatThread({
@@ -32,14 +41,64 @@ export function ChatThread({
   initialMessages,
   initialPrompt,
   initialModel,
+  initialLastEventId,
+  initialPublicAccessToken,
 }: ChatThreadProps) {
-  const { messages, sendMessage, status, stop, error } = useChat({
+  const [selectedModel, setSelectedModel] = React.useState<string>(
+    initialModel || DEFAULT_MODEL_ID
+  )
+
+  const selectedModelRef = React.useRef(selectedModel)
+  React.useEffect(() => {
+    selectedModelRef.current = selectedModel
+  }, [selectedModel])
+
+  const lastKnownEventIdRef = React.useRef<string | undefined>(
+    initialLastEventId
+  )
+
+  const transport = useTriggerChatTransport<typeof gameChat>({
+    task: "game-chat",
+    accessToken: ({ chatId }) => mintChatAccessToken(chatId),
+    startSession: ({ chatId, clientData }) =>
+      startChatSession({ chatId, clientData }),
+    clientData: {
+      model: selectedModel,
+    },
+    sessions:
+      id && initialPublicAccessToken
+        ? {
+            [id]: {
+              publicAccessToken: initialPublicAccessToken,
+              lastEventId: initialLastEventId,
+              isStreaming: false,
+            },
+          }
+        : undefined,
+    onSessionChange: (chatId, session) => {
+      if (session) {
+        if (session.lastEventId) {
+          lastKnownEventIdRef.current = session.lastEventId
+        } else if (lastKnownEventIdRef.current) {
+          session.lastEventId = lastKnownEventIdRef.current
+        }
+      }
+    },
+  })
+
+  const { messages, sendMessage, status, stop, error, clearError, setMessages } = useChat({
     id,
     messages: initialMessages,
-    transport: new DefaultChatTransport({
-      api: "/api/chat",
-    }),
+    transport,
+    resume: false,
   })
+
+  const handleStop = React.useCallback(() => {
+    if (id) {
+      void transport.stopGeneration(id)
+    }
+    stop()
+  }, [id, transport, stop])
 
   const hasSentInitialPrompt = React.useRef(false)
 
@@ -63,29 +122,100 @@ export function ChatThread({
         )
       }
 
+      const modelToUse = selectedModelRef.current
+
       sendMessage(
         { text: initialPrompt },
         {
+          metadata: {
+            model: modelToUse,
+          },
           body: {
             id,
-            model: initialModel,
+            model: modelToUse,
           },
         }
       )
     }
-  }, [initialPrompt, initialModel, id, messages.length, sendMessage])
+  }, [initialPrompt, id, messages.length, sendMessage])
 
   const handleSendMessage = (value: string, options?: { model?: string }) => {
+    const modelToUse = options?.model || selectedModel
+    if (options?.model && options.model !== selectedModel) {
+      setSelectedModel(options.model)
+    }
+
+    if (error && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1]
+      const errorText = sanitizeErrorMessage(error.message || error)
+      if (lastMsg.role === "user") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `error-${Date.now()}`,
+            role: "assistant",
+            metadata: {
+              isError: true,
+              errorText,
+            },
+            parts: [],
+          },
+        ])
+      } else if (lastMsg.role === "assistant") {
+        setMessages((prev) => [
+          ...prev.slice(0, -1),
+          {
+            ...lastMsg,
+            metadata: {
+              ...(lastMsg.metadata as object),
+              isError: true,
+              errorText,
+            },
+            parts: [],
+          },
+        ])
+      }
+    }
+
+    if (id && lastKnownEventIdRef.current) {
+      const currentSession = transport.getSession(id)
+      if (currentSession && !currentSession.lastEventId) {
+        transport.setSession(id, {
+          ...currentSession,
+          lastEventId: lastKnownEventIdRef.current,
+        })
+      }
+    }
+
+    clearError()
     sendMessage(
       { text: value },
       {
+        metadata: {
+          model: modelToUse,
+        },
         body: {
           id,
-          model: options?.model,
+          model: modelToUse,
         },
       }
     )
   }
+
+  const isGenerating = status === "streaming" || status === "submitted"
+
+  React.useEffect(() => {
+    if (status === "ready") {
+      const spacer = document.querySelector<HTMLElement>(
+        "[data-message-scroller-spacer]"
+      )
+      if (spacer) {
+        spacer.style.height = "0px"
+        spacer.style.marginTop = ""
+        spacer.hidden = true
+      }
+    }
+  }, [status])
 
   return (
     <div className={cn("flex size-full min-h-0 flex-col", className)}>
@@ -93,7 +223,12 @@ export function ChatThread({
         <MessageScrollerProvider>
           <MessageScroller className="size-full">
             <MessageScrollerViewport>
-              <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-6 px-4 py-6">
+              <MessageScrollerContent
+                spacerClassName={
+                  status === "ready" ? "!h-0 !hidden !m-0" : undefined
+                }
+                className="mx-auto w-full max-w-3xl gap-6 px-4 py-6"
+              >
                 {messages.length === 0 &&
                   status === "ready" &&
                   !initialPrompt && (
@@ -119,6 +254,42 @@ export function ChatThread({
                   const isAssistant = message.role === "assistant"
                   const isLast = index === messages.length - 1
 
+                  const isErrorMessage = Boolean(
+                    (message.metadata as { isError?: boolean } | undefined)?.isError
+                  )
+                  const errorText =
+                    (message.metadata as { errorText?: string } | undefined)?.errorText ||
+                    "The model failed to generate a response. Please try again or select a different model."
+
+                  if (isErrorMessage) {
+                    return (
+                      <MessageScrollerItem
+                        key={message.id}
+                        messageId={message.id}
+                        scrollAnchor={isLast && isGenerating}
+                      >
+                        <Message align="start">
+                          <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
+                            <Image
+                              src="/logo.svg"
+                              alt="Assistant"
+                              width={32}
+                              height={32}
+                              className="size-8"
+                            />
+                          </MessageAvatar>
+                          <MessageContent className="justify-center">
+                            <Bubble variant="destructive" align="start">
+                              <BubbleContent className="text-sm">
+                                {errorText}
+                              </BubbleContent>
+                            </Bubble>
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    )
+                  }
+
                   const textContent =
                     message.parts && Array.isArray(message.parts)
                       ? message.parts
@@ -129,17 +300,22 @@ export function ChatThread({
                           .join("")
                       : ""
 
-                  // If this is an assistant message currently streaming with no text yet, don't show empty bubble
-                  if (
-                    !textContent &&
-                    isAssistant &&
-                    (status === "streaming" || status === "submitted")
-                  ) {
+                  const hasNonTextParts =
+                    message.parts &&
+                    Array.isArray(message.parts) &&
+                    message.parts.some((p) => p.type !== "text")
+
+                  // If this is an assistant message with no text and no other parts, don't show empty bubble
+                  if (!textContent.trim() && !hasNonTextParts && isAssistant) {
                     return null
                   }
 
                   return (
-                    <MessageScrollerItem key={message.id} scrollAnchor={isLast}>
+                    <MessageScrollerItem
+                      key={message.id}
+                      messageId={message.id}
+                      scrollAnchor={isLast && isGenerating}
+                    >
                       <Message align={isAssistant ? "start" : "end"}>
                         {isAssistant && (
                           <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
@@ -157,8 +333,17 @@ export function ChatThread({
                             variant={isAssistant ? "ghost" : "secondary"}
                             align={isAssistant ? "start" : "end"}
                           >
-                            <BubbleContent className="text-sm leading-relaxed whitespace-pre-line">
-                              {textContent}
+                            <BubbleContent className="text-sm leading-relaxed">
+                              {isAssistant ? (
+                                <Markdown
+                                  content={textContent}
+                                  isStreaming={isGenerating && isLast}
+                                />
+                              ) : (
+                                <div className="whitespace-pre-line">
+                                  {textContent}
+                                </div>
+                              )}
                             </BubbleContent>
                           </Bubble>
                         </MessageContent>
@@ -184,10 +369,10 @@ export function ChatThread({
                       </MessageAvatar>
                       <MessageContent className="justify-center">
                         <Bubble variant="ghost" align="start">
-                          <BubbleContent className="flex items-center gap-1.5 py-1 text-sm text-muted-foreground">
-                            <span className="inline-block size-1.5 animate-bounce rounded-full bg-muted-foreground/60" />
-                            <span className="inline-block size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:0.2s]" />
-                            <span className="inline-block size-1.5 animate-bounce rounded-full bg-muted-foreground/60 [animation-delay:0.4s]" />
+                          <BubbleContent className="flex h-8 items-center gap-1.5 overflow-visible py-0 text-sm text-muted-foreground">
+                            <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80" />
+                            <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80 [animation-delay:0.2s]" />
+                            <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80 [animation-delay:0.4s]" />
                           </BubbleContent>
                         </Bubble>
                       </MessageContent>
@@ -196,13 +381,21 @@ export function ChatThread({
                 )}
 
                 {error && (
-                  <MessageScrollerItem scrollAnchor>
+                  <MessageScrollerItem scrollAnchor={isGenerating}>
                     <Message align="start">
-                      <MessageContent>
+                      <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
+                        <Image
+                          src="/logo.svg"
+                          alt="Assistant"
+                          width={32}
+                          height={32}
+                          className="size-8"
+                        />
+                      </MessageAvatar>
+                      <MessageContent className="justify-center">
                         <Bubble variant="destructive" align="start">
                           <BubbleContent className="text-sm">
-                            {error.message ||
-                              "An error occurred while generating the response."}
+                            {sanitizeErrorMessage(error.message || error)}
                           </BubbleContent>
                         </Bubble>
                       </MessageContent>
@@ -221,8 +414,9 @@ export function ChatThread({
           placeholder="Ask a follow up or describe changes..."
           sendMessage={handleSendMessage}
           status={status}
-          onStop={stop}
-          model={initialModel}
+          onStop={handleStop}
+          model={selectedModel}
+          onModelChange={setSelectedModel}
         />
       </div>
     </div>

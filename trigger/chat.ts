@@ -1,26 +1,15 @@
-import { auth } from "@clerk/nextjs/server"
 import { anthropic } from "@ai-sdk/anthropic"
 import { google } from "@ai-sdk/google"
 import { openai } from "@ai-sdk/openai"
-import {
-  consumeStream,
-  convertToModelMessages,
-  createUIMessageStreamResponse,
-  gateway,
-  generateId,
-  streamText,
-  toUIMessageStream,
-  validateUIMessages,
-  type LanguageModel,
-  type UIMessage,
-} from "ai"
+import { locals } from "@trigger.dev/sdk"
+import { chat, upsertIncomingMessage } from "@trigger.dev/sdk/ai"
+import { gateway, streamText, type LanguageModel, type UIMessage } from "ai"
+import { eq } from "drizzle-orm"
+import { z } from "zod"
 
-import { resolveModel } from "@/lib/ai/models"
-import { saveGameMessages } from "@/lib/games/actions"
-import { getGame } from "@/lib/games/queries"
-
-// Allow streaming responses up to 60 seconds
-export const maxDuration = 60
+import { resolveModel, DEFAULT_MODEL_ID } from "@/lib/ai/models"
+import { sanitizeErrorMessage } from "@/lib/ai/errors"
+import { db, games } from "@/lib/db"
 
 /**
  * Resolves the language model based on provider or model identifier,
@@ -29,7 +18,7 @@ export const maxDuration = 60
  */
 function getLanguageModel(provider?: string, model?: string): LanguageModel {
   const p = provider?.toLowerCase().trim()
-  const m = model?.trim()
+  const m = (model || DEFAULT_MODEL_ID).trim()
   const mLower = m?.toLowerCase()
 
   const hasGatewayKey = Boolean(process.env.AI_GATEWAY_API_KEY)
@@ -183,7 +172,7 @@ function getLanguageModel(provider?: string, model?: string): LanguageModel {
 
   // 5. Default based on available environment API keys
   if (hasGatewayKey) {
-    return gateway("moonshotai/kimi-k3")
+    return gateway(m || DEFAULT_MODEL_ID)
   }
   if (hasGoogleKey) {
     return google("gemini-2.5-flash")
@@ -199,95 +188,150 @@ function getLanguageModel(provider?: string, model?: string): LanguageModel {
   return google(m || "gemini-2.5-flash")
 }
 
-export async function POST(req: Request) {
-  // 1. Auth gate with Clerk SDK
-  const { userId, orgId } = await auth()
-  if (!userId) {
-    return new Response("Unauthorized", { status: 401 })
-  }
+const streamErrorKey = locals.create<string>("game-chat.streamError")
+const tools = {}
 
-  // 2. Parse request body sent by useChat
-  const {
-    messages,
-    id,
+export const gameChat = chat.agent({
+  id: "game-chat",
+  tools,
+  clientDataSchema: z.object({
+    model: z.string().optional(),
+    provider: z.string().optional(),
+  }),
+  hydrateMessages: async ({ chatId, trigger, incomingMessages }) => {
+    const [record] = await db
+      .select({ messages: games.messages })
+      .from(games)
+      .where(eq(games.id, chatId))
+      .limit(1)
+    const stored = (record?.messages as UIMessage[]) ?? []
+
+    if (upsertIncomingMessage(stored, { trigger, incomingMessages })) {
+      await db
+        .update(games)
+        .set({ messages: stored, updatedAt: new Date() })
+        .where(eq(games.id, chatId))
+    }
+
+    return stored
+  },
+  uiMessageStreamOptions: {
+    onError: (error) => {
+      const message = sanitizeErrorMessage(error)
+      locals.set(streamErrorKey, message)
+      return message
+    },
+  },
+  onTurnStart: async ({ chatId, uiMessages, clientData }) => {
+    await db
+      .update(games)
+      .set({
+        messages: uiMessages,
+        ...(clientData?.model ? { model: clientData.model } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(games.id, chatId))
+  },
+  onTurnComplete: async ({
     chatId,
-    model,
-    provider,
-  }: {
-    messages?: UIMessage[]
-    id?: string
-    chatId?: string
-    model?: string
-    provider?: string
-  } = await req.json()
+    uiMessages,
+    lastEventId,
+    clientData,
+    error,
+    finishReason,
+  }) => {
+    const finalMessages = [...uiMessages]
+    const streamError = locals.get(streamErrorKey)
+    locals.set(streamErrorKey, undefined)
 
-  if (!messages || !Array.isArray(messages) || messages.length === 0) {
-    return new Response("Messages array is required", { status: 400 })
-  }
+    const isFailedTurn = Boolean(error) || finishReason === "error"
 
-  const gameId = id || chatId
-  if (!gameId) {
-    return new Response("Game ID is required", { status: 400 })
-  }
+    const lastIdx = finalMessages.length - 1
+    const lastMsg = lastIdx >= 0 ? finalMessages[lastIdx] : undefined
 
-  // 3. Persist incoming browser history immediately so user messages are never lost
-  await saveGameMessages(gameId, messages, orgId)
+    const textParts =
+      lastMsg && Array.isArray(lastMsg.parts)
+        ? lastMsg.parts.filter(
+            (p): p is { type: "text"; text: string } =>
+              p.type === "text" &&
+              typeof (p as { text?: unknown }).text === "string"
+          )
+        : []
+    const hasText = textParts.some((p) => p.text.trim().length > 0)
 
-  // 4. Select provider & model (Google, OpenAI, or Anthropic)
-  const selectedModel = getLanguageModel(provider, model)
-  // 5. Validate that the messages are in correct format
-  const validatedMessages = await validateUIMessages({ messages })
-  // 6. Stream response using AI SDK
-  const result = streamText({
-    model: selectedModel,
-    messages: await convertToModelMessages(validatedMessages),
-  })
+    // A turn needs error handling if an explicit error occurred OR if the assistant ended with no text
+    if (isFailedTurn || (lastMsg?.role === "assistant" && !hasText)) {
+      const sanitizedError = sanitizeErrorMessage(
+        error ||
+          streamError ||
+          "The model failed to generate a response. Please select a different model."
+      )
 
-  // Ensure stream runs to completion even if client disconnects
-  result.consumeStream()
-
-  // 7. Return streaming response compatible with useChat, saving full messages upon completion
-  return createUIMessageStreamResponse({
-    stream: toUIMessageStream({
-      stream: result.stream,
-      originalMessages: messages,
-      generateMessageId: generateId,
-      onError: (error) => {
-        if (error == null) return "An error occurred."
-        if (typeof error === "string") return error
-        if (error instanceof Error) return error.message
-        return JSON.stringify(error)
-      },
-      onEnd: async ({ messages: completedMessages }) => {
-        try {
-          await saveGameMessages(gameId, completedMessages, orgId)
-        } catch (error) {
-          console.error("Failed to persist completed chat messages:", error)
+      if (!lastMsg || lastMsg.role === "user") {
+        // No assistant message was generated at all -> append new assistant message with error metadata
+        finalMessages.push({
+          id: `error-${Date.now()}`,
+          role: "assistant",
+          metadata: {
+            isError: true,
+            errorText: sanitizedError,
+          },
+          parts: [],
+        })
+      } else if (lastMsg.role === "assistant") {
+        // Trigger.dev created an assistant stub or turn failed mid-stream
+        finalMessages[lastIdx] = {
+          ...lastMsg,
+          metadata: {
+            ...(lastMsg.metadata as object),
+            isError: true,
+            errorText: sanitizedError,
+          },
+          parts: [],
         }
+      }
+    }
+
+    await db
+      .update(games)
+      .set({
+        messages: finalMessages,
+        lastEventId: lastEventId ?? null,
+        ...(clientData?.model ? { model: clientData.model } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(games.id, chatId))
+
+    chat.history.set(finalMessages)
+  },
+  run: async ({ messages, tools, signal, clientData }) => {
+    const selectedModel = getLanguageModel(
+      clientData?.provider,
+      clientData?.model
+    )
+
+    // Ensure alternating user/assistant roles for LLM providers (e.g. Anthropic/Gemini) that require it
+    const sanitizedMessages = messages.reduce<typeof messages>(
+      (acc, current) => {
+        if (acc.length === 0) return [current]
+        const prev = acc[acc.length - 1]
+        if (prev.role === "user" && current.role === "user") {
+          acc.push({
+            role: "assistant",
+            content: "An error occurred during the previous attempt.",
+          })
+        }
+        acc.push(current)
+        return acc
       },
-    }),
-    consumeSseStream: consumeStream,
-  })
-}
+      []
+    )
 
-export async function GET(req: Request) {
-  const { userId } = await auth()
-  if (!userId) {
-    return new Response("Unauthorized", { status: 401 })
-  }
-
-  const { searchParams } = new URL(req.url)
-  const chatId = searchParams.get("chatId") || searchParams.get("id")
-  if (!chatId) {
-    return new Response("chatId or id query parameter is required", {
-      status: 400,
+    return streamText({
+      ...chat.toStreamTextOptions({ tools }),
+      model: selectedModel,
+      messages: sanitizedMessages,
+      abortSignal: signal,
     })
-  }
-
-  const game = await getGame(chatId)
-  if (!game) {
-    return new Response("Game not found", { status: 404 })
-  }
-
-  return Response.json(game.messages ?? [])
-}
+  },
+})

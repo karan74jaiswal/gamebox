@@ -1,4 +1,4 @@
-import { defineConfig } from "@trigger.dev/sdk";
+import { defineConfig } from "@trigger.dev/sdk"
 
 export default defineConfig({
   project: "proj_dgvcxasnsdrzwgnurroa",
@@ -11,7 +11,7 @@ export default defineConfig({
   retries: {
     enabledInDev: true,
     default: {
-      maxAttempts: 3,
+      maxAttempts: 1,
       minTimeoutInMs: 1000,
       maxTimeoutInMs: 10000,
       factor: 2,
@@ -19,4 +19,4 @@ export default defineConfig({
     },
   },
   dirs: ["trigger"],
-});
+})

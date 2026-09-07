@@ -16,19 +16,25 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
 } from "@/components/ui/dropdown-menu"
-import { AVAILABLE_MODELS, DEFAULT_MODEL_ID, resolveModel } from "@/lib/ai/models"
+import {
+  AVAILABLE_MODELS,
+  DEFAULT_MODEL_ID,
+  resolveModel,
+} from "@/lib/ai/models"
 import { createGame } from "@/lib/games/actions"
 import { cn } from "@/lib/utils"
 
 export interface ChatComposerProps {
   input?: string
   onInputChange?: (value: string) => void
-  value?: string
   onChange?: (value: string) => void
   placeholder?: string
   className?: string
-  sendMessage?: (value: string, options?: { model?: string }) => void | Promise<void>
-  onSendMessage?: (value: string, options?: { model?: string }) => void | Promise<void>
+  sendMessage?: (
+    value: string,
+    options?: { model?: string }
+  ) => void | Promise<void>
+
   disabled?: boolean
   status?: string
   onStop?: () => void
@@ -39,12 +45,10 @@ export interface ChatComposerProps {
 export function ChatComposer({
   input: controlledInput,
   onInputChange,
-  value: controlledValue,
   onChange,
   placeholder = "Describe the game you want to build...",
   className,
   sendMessage,
-  onSendMessage,
   disabled = false,
   status,
   onStop,
@@ -58,6 +62,12 @@ export function ChatComposer({
   )
   const [isPending, startTransition] = React.useTransition()
 
+  React.useEffect(() => {
+    if (controlledModel) {
+      setInternalModel(controlledModel)
+    }
+  }, [controlledModel])
+
   const activeModelId = controlledModel || internalModel
   const activeModel = resolveModel(activeModelId)
 
@@ -68,19 +78,13 @@ export function ChatComposer({
 
   const isStreaming = status === "streaming" || status === "submitted"
 
-  const isControlled =
-    controlledInput !== undefined || controlledValue !== undefined
+  const isControlled = controlledInput !== undefined
   const currentValue =
-    controlledInput !== undefined
-      ? controlledInput
-      : controlledValue !== undefined
-        ? controlledValue
-        : internalPrompt
+    controlledInput !== undefined ? controlledInput : internalPrompt
 
   const handleInputChange = (newValue: string) => {
-    if (!isControlled) {
-      setInternalPrompt(newValue)
-    }
+    if (!isControlled) setInternalPrompt(newValue)
+
     onInputChange?.(newValue)
     onChange?.(newValue)
   }
@@ -89,14 +93,15 @@ export function ChatComposer({
     const content = currentValue.trim()
     if (!content || isPending || isStreaming) return
 
-    const sendAction = onSendMessage || sendMessage
-
     startTransition(async () => {
       try {
-        if (sendAction) {
-          await sendAction(content, { model: activeModel.id })
+        if (sendMessage) {
+          await sendMessage(content, { model: activeModel.id })
         } else {
-          const newGame = await createGame({ title: content })
+          const newGame = await createGame({
+            title: content,
+            model: activeModel.id,
+          })
           if (newGame?.id) {
             const params = new URLSearchParams()
             params.set("prompt", content)
@@ -111,7 +116,7 @@ export function ChatComposer({
         onChange?.("")
       } catch (error) {
         console.error(
-          sendAction ? "Failed to send message:" : "Failed to create game:",
+          sendMessage ? "Failed to send message:" : "Failed to create game:",
           error
         )
       }
@@ -130,9 +135,7 @@ export function ChatComposer({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
-              if (!isStreaming) {
-                handleSubmit()
-              }
+              if (!isStreaming) handleSubmit()
             }
           }}
           disabled={isPending || disabled}
@@ -143,25 +146,30 @@ export function ChatComposer({
               render={
                 <InputGroupButton variant="ghost" disabled={isStreaming}>
                   <Grip />
-                  <span className="max-w-[140px] truncate">{activeModel.label}</span>
+                  <span className="max-w-[140px] truncate">
+                    {activeModel.label}
+                  </span>
                   <ChevronDown />
                 </InputGroupButton>
               }
             />
-            <DropdownMenuContent align="start" className="w-64 max-h-80 overflow-y-auto">
+            <DropdownMenuContent
+              align="start"
+              className="max-h-80 w-64 overflow-y-auto"
+            >
               {AVAILABLE_MODELS.map((item) => (
                 <DropdownMenuItem
                   key={item.id}
                   onClick={() => handleModelSelect(item.id)}
-                  className="flex flex-col items-start gap-0.5 py-1.5 cursor-pointer"
+                  className="flex cursor-pointer flex-col items-start gap-0.5 py-1.5"
                 >
                   <div className="flex w-full items-center justify-between">
-                    <span className="font-medium text-sm">{item.label}</span>
+                    <span className="text-sm font-medium">{item.label}</span>
                     {activeModel.id === item.id && (
-                      <span className="text-xs text-primary font-bold">✓</span>
+                      <span className="text-xs font-bold text-primary">✓</span>
                     )}
                   </div>
-                  <span className="text-xs text-muted-foreground line-clamp-1">
+                  <span className="line-clamp-1 text-xs text-muted-foreground">
                     {item.description}
                   </span>
                 </DropdownMenuItem>

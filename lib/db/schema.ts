@@ -8,6 +8,8 @@ export const games = pgTable(
     orgId: text("org_id").notNull(),
     title: text("title").notNull(),
     messages: jsonb("messages").$type<UIMessage[]>().default([]).notNull(),
+    lastEventId: text("last_event_id"),
+    model: text("model").default("google/gemini-2.5-flash"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .defaultNow()

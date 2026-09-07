@@ -9,13 +9,16 @@ import { google } from "@ai-sdk/google"
 
 import { db, games, type Game } from "@/lib/db"
 
+import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
+
 export type CreateGameInput =
-  | { title?: string; prompt?: string }
+  | { title?: string; prompt?: string; model?: string }
   | string
   | FormData
 
 export async function createGame(input: CreateGameInput): Promise<Game> {
   let promptText = ""
+  let modelChoice: string | undefined
 
   if (typeof input === "string") {
     promptText = input
@@ -24,11 +27,13 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
       input.get("prompt")?.toString() ||
       input.get("title")?.toString() ||
       ""
+    modelChoice = input.get("model")?.toString()
   } else if (input && typeof input === "object") {
     promptText =
       ("prompt" in input && input.prompt) ||
       ("title" in input && input.title) ||
       ""
+    modelChoice = input.model
   }
 
   promptText = promptText.trim()
@@ -50,6 +55,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
     .values({
       title: initialTitle,
       orgId,
+      model: modelChoice || DEFAULT_MODEL_ID,
     })
     .returning()
 

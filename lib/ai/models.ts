@@ -111,14 +111,17 @@ export const AVAILABLE_MODELS: AIModelOption[] = [
   },
 ]
 
-export const DEFAULT_MODEL_ID = "moonshotai/kimi-k3"
+export const DEFAULT_MODEL_ID = "google/gemini-2.5-flash"
 
 /**
  * Finds a model by its ID or friendly label, falling back to the default model.
  */
 export function resolveModel(identifier?: string): AIModelOption {
+  const defaultOption =
+    AVAILABLE_MODELS.find((m) => m.id === DEFAULT_MODEL_ID) || AVAILABLE_MODELS[0]
+
   if (!identifier) {
-    return AVAILABLE_MODELS[0]
+    return defaultOption
   }
 
   const clean = identifier.trim().toLowerCase()
@@ -131,7 +134,7 @@ export function resolveModel(identifier?: string): AIModelOption {
   const byLabel = AVAILABLE_MODELS.find((m) => m.label.toLowerCase() === clean)
   if (byLabel) return byLabel
 
-  // Fuzzy match (e.g. "kimi", "gpt-4o", "claude 3.7")
+  // Fuzzy match (e.g. "kimi", "gpt-4o", "claude 3.7", "gemini 2.5")
   const byPartial = AVAILABLE_MODELS.find(
     (m) =>
       m.id.toLowerCase().includes(clean) ||
@@ -140,5 +143,5 @@ export function resolveModel(identifier?: string): AIModelOption {
   )
   if (byPartial) return byPartial
 
-  return AVAILABLE_MODELS[0]
+  return defaultOption
 }
