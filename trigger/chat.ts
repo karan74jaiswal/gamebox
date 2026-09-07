@@ -11,6 +11,7 @@ import { resolveModel, DEFAULT_MODEL_ID } from "@/lib/ai/models"
 import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
 import { generateGameTitle } from "@/lib/games/title"
 import { db, games } from "@/lib/db"
+import { createGameSandbox } from "@/lib/daytona/utils"
 
 /**
  * Resolves the language model based on provider or model identifier,
@@ -216,6 +217,9 @@ export const gameChat = chat.agent({
 
     return stored
   },
+  onChatStart: async ({ chatId }) => {
+    await createGameSandbox(chatId)
+  },
   uiMessageStreamOptions: {
     onError: (error) => {
       if (isAbortError(error) || chat.isStopped()) {
@@ -252,7 +256,10 @@ export const gameChat = chat.agent({
                 typeof (p as { text?: unknown }).text === "string"
             )
           : []
-      const promptText = textParts.map((p) => p.text).join(" ").trim()
+      const promptText = textParts
+        .map((p) => p.text)
+        .join(" ")
+        .trim()
 
       if (promptText) {
         chat.defer(async () => {
@@ -291,9 +298,7 @@ export const gameChat = chat.agent({
     locals.set(streamErrorKey, undefined)
 
     const wasStopped =
-      Boolean(stopped) ||
-      chat.isStopped() ||
-      isAbortError(error)
+      Boolean(stopped) || chat.isStopped() || isAbortError(error)
 
     const isFailedTurn =
       !wasStopped && (Boolean(error) || finishReason === "error")

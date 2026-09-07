@@ -7,6 +7,7 @@ export const games = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     orgId: text("org_id").notNull(),
     title: text("title").notNull(),
+    sandboxId: text("sandbox_id"),
     messages: jsonb("messages").$type<UIMessage[]>().default([]).notNull(),
     lastEventId: text("last_event_id"),
     model: text("model").default("google/gemini-2.5-flash"),
