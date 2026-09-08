@@ -10,6 +10,7 @@ import { z } from "zod"
 import { resolveModel, DEFAULT_MODEL_ID } from "@/lib/ai/models"
 import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
 import { generateGameTitle } from "@/lib/games/title"
+import { instructions } from "@/lib/games/instructions"
 import { db, games } from "@/lib/db"
 import { getGameSandbox } from "@/lib/daytona/utils"
 
@@ -264,6 +265,9 @@ export const gameChat = chat.agent({
       })
     }
   },
+  onTurnStart: async () => {
+    // chat.prompt.set(systemPrompt)
+  },
   uiMessageStreamOptions: {
     onError: (error) => {
       if (isAbortError(error) || chat.isStopped()) {
@@ -392,6 +396,7 @@ export const gameChat = chat.agent({
     return streamText({
       ...chat.toStreamTextOptions({ tools }),
       model: selectedModel,
+      instructions,
       messages: sanitizedMessages,
       abortSignal: signal,
     })
