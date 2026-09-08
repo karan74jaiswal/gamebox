@@ -3,7 +3,7 @@
 import * as React from "react"
 import Image from "next/image"
 import { useChat } from "@ai-sdk/react"
-import type { UIMessage } from "ai"
+import { isToolUIPart, isReasoningUIPart, getToolName, type UIMessage } from "ai"
 import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
 
 import type { gameChat } from "@/trigger/chat"
@@ -23,6 +23,8 @@ import { Message, MessageAvatar, MessageContent } from "@/components/ui/message"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Markdown } from "@/components/ui/markdown"
 import { ChatComposer } from "@/components/chat-composer"
+import { ToolCall, getToolStatus } from "@/components/tool-call"
+import { Reasoning } from "@/components/reasoning"
 import { cn } from "@/lib/utils"
 
 export interface ChatThreadProps {
@@ -88,11 +90,31 @@ export function ChatThread({
     },
   })
 
+  const refreshedToolCallsRef = React.useRef<Set<string>>(new Set())
+  const refreshDebounceTimerRef = React.useRef<NodeJS.Timeout | null>(null)
+
+  // Reset tracked completed tools if the game ID changes
+  React.useEffect(() => {
+    refreshedToolCallsRef.current.clear()
+  }, [id])
+
   const { messages, sendMessage, status, stop, error, clearError, setMessages } = useChat({
     id,
     messages: initialMessages,
     transport,
     resume: false,
+    onFinish: () => {
+      // If a code refresh was debounced, flush it promptly on turn completion
+      if (refreshDebounceTimerRef.current) {
+        clearTimeout(refreshDebounceTimerRef.current)
+        refreshDebounceTimerRef.current = null
+        window.dispatchEvent(
+          new CustomEvent("game-code-updated", {
+            detail: { id },
+          })
+        )
+      }
+    },
     onData: (dataPart) => {
       const part = dataPart as { type?: string; data?: unknown }
       if (
@@ -127,6 +149,62 @@ export function ChatThread({
     },
   })
 
+  // Detect completed file-modifying tools and dispatch game-code-updated
+  React.useEffect(() => {
+    let hasNewCodeChanges = false
+
+    for (const message of messages) {
+      if (message.role !== "assistant" || !Array.isArray(message.parts)) {
+        continue
+      }
+
+      for (const part of message.parts) {
+        if (isToolUIPart(part)) {
+          const name = getToolName(part)
+          const isCodeModifying =
+            name === "write_file" ||
+            name === "replace_text" ||
+            name === "delete_file"
+
+          if (isCodeModifying) {
+            const toolCallId = part.toolCallId
+            const toolStatus = getToolStatus(part)
+
+            if (
+              toolCallId &&
+              toolStatus === "done" &&
+              !refreshedToolCallsRef.current.has(toolCallId)
+            ) {
+              refreshedToolCallsRef.current.add(toolCallId)
+              hasNewCodeChanges = true
+            }
+          }
+        }
+      }
+    }
+
+    if (hasNewCodeChanges) {
+      if (refreshDebounceTimerRef.current) {
+        clearTimeout(refreshDebounceTimerRef.current)
+      }
+      refreshDebounceTimerRef.current = setTimeout(() => {
+        window.dispatchEvent(
+          new CustomEvent("game-code-updated", {
+            detail: { id },
+          })
+        )
+      }, 500)
+    }
+  }, [messages, id])
+
+  React.useEffect(() => {
+    return () => {
+      if (refreshDebounceTimerRef.current) {
+        clearTimeout(refreshDebounceTimerRef.current)
+      }
+    }
+  }, [])
+
   const handleStop = React.useCallback(() => {
     if (id) {
       void transport.stopGeneration(id)
@@ -145,11 +223,11 @@ export function ChatThread({
               )
             : []
         const hasText = textParts.some((p) => p.text.trim().length > 0)
-        const hasNonTextParts =
+        const hasToolParts =
           last.parts &&
           Array.isArray(last.parts) &&
-          last.parts.some((p) => p.type !== "text")
-        if (!hasText && !hasNonTextParts) {
+          last.parts.some((p) => isToolUIPart(p))
+        if (!hasText && !hasToolParts) {
           return prev.slice(0, -1)
         }
       }
@@ -347,23 +425,36 @@ export function ChatThread({
                     )
                   }
 
-                  const textContent =
+                  const textParts =
                     message.parts && Array.isArray(message.parts)
-                      ? message.parts
-                          .filter((p) => p.type === "text")
-                          .map(
-                            (p) => (p as { type: "text"; text: string }).text
-                          )
-                          .join("")
-                      : ""
+                      ? message.parts.filter(
+                          (p): p is { type: "text"; text: string } =>
+                            p.type === "text" &&
+                            typeof (p as { text?: unknown }).text === "string"
+                        )
+                      : []
 
-                  const hasNonTextParts =
+                  const textContent = textParts.map((p) => p.text).join("")
+
+                  const hasToolParts =
                     message.parts &&
                     Array.isArray(message.parts) &&
-                    message.parts.some((p) => p.type !== "text")
+                    message.parts.some((p) => isToolUIPart(p))
 
-                  // If this is an assistant message with no text and no other parts, don't show empty bubble
-                  if (!textContent.trim() && !hasNonTextParts && isAssistant) {
+                  const hasReasoningParts =
+                    message.parts &&
+                    Array.isArray(message.parts) &&
+                    message.parts.some(
+                      (p) => isReasoningUIPart(p) && p.text.trim().length > 0
+                    )
+
+                  // If this is an assistant message with no text, no tool parts, and no reasoning, don't show empty bubble
+                  if (
+                    !textContent.trim() &&
+                    !hasToolParts &&
+                    !hasReasoningParts &&
+                    isAssistant
+                  ) {
                     return null
                   }
 
@@ -392,10 +483,58 @@ export function ChatThread({
                           >
                             <BubbleContent className="text-sm leading-relaxed">
                               {isAssistant ? (
-                                <Markdown
-                                  content={textContent}
-                                  isStreaming={isGenerating && isLast}
-                                />
+                                <div className="flex flex-col gap-2.5">
+                                  {message.parts && message.parts.length > 0 ? (
+                                    message.parts.map((part, partIndex) => {
+                                      if (isReasoningUIPart(part)) {
+                                        const isLastPart =
+                                          partIndex === message.parts.length - 1
+                                        return (
+                                          <Reasoning
+                                            key={part.id || `reasoning-${partIndex}`}
+                                            part={part}
+                                            isStreaming={
+                                              part.state === "streaming" ||
+                                              (isGenerating && isLast && isLastPart)
+                                            }
+                                          />
+                                        )
+                                      }
+
+                                      if (part.type === "text") {
+                                        const text = (part as { text?: string }).text
+                                        if (!text || !text.trim()) return null
+                                        const isLastPart =
+                                          partIndex === message.parts.length - 1
+                                        return (
+                                          <Markdown
+                                            key={`text-${partIndex}`}
+                                            content={text}
+                                            isStreaming={
+                                              isGenerating && isLast && isLastPart
+                                            }
+                                          />
+                                        )
+                                      }
+
+                                      if (isToolUIPart(part)) {
+                                        return (
+                                          <ToolCall
+                                            key={part.toolCallId}
+                                            part={part}
+                                          />
+                                        )
+                                      }
+
+                                      return null
+                                    })
+                                  ) : textContent ? (
+                                    <Markdown
+                                      content={textContent}
+                                      isStreaming={isGenerating && isLast}
+                                    />
+                                  ) : null}
+                                </div>
                               ) : (
                                 <div className="whitespace-pre-line">
                                   {textContent}
@@ -409,33 +548,50 @@ export function ChatThread({
                   )
                 })}
 
-                {(status === "submitted" ||
-                  (status === "streaming" &&
-                    messages.length > 0 &&
-                    messages[messages.length - 1].role === "user")) && (
-                  <MessageScrollerItem scrollAnchor>
-                    <Message align="start">
-                      <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
-                        <Image
-                          src="/logo.svg"
-                          alt="Assistant"
-                          width={32}
-                          height={32}
-                          className="size-8 animate-pulse"
-                        />
-                      </MessageAvatar>
-                      <MessageContent className="justify-center">
-                        <Bubble variant="ghost" align="start">
-                          <BubbleContent className="flex h-8 items-center gap-1.5 overflow-visible py-0 text-sm text-muted-foreground">
-                            <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80" />
-                            <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80 [animation-delay:0.2s]" />
-                            <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80 [animation-delay:0.4s]" />
-                          </BubbleContent>
-                        </Bubble>
-                      </MessageContent>
-                    </Message>
-                  </MessageScrollerItem>
-                )}
+                {(() => {
+                  const lastMessage = messages[messages.length - 1]
+                  const isWaitingForFirstToken =
+                    status === "submitted" ||
+                    (status === "streaming" &&
+                      (!lastMessage ||
+                        lastMessage.role === "user" ||
+                        (lastMessage.role === "assistant" &&
+                          (!lastMessage.parts ||
+                            lastMessage.parts.length === 0 ||
+                            lastMessage.parts.every(
+                              (p) =>
+                                (p.type === "text" &&
+                                  !(p as { text?: string }).text?.trim()) ||
+                                p.type === "step-start"
+                            )))))
+
+                  return (
+                    isWaitingForFirstToken && (
+                      <MessageScrollerItem scrollAnchor>
+                        <Message align="start">
+                          <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
+                            <Image
+                              src="/logo.svg"
+                              alt="Assistant"
+                              width={32}
+                              height={32}
+                              className="size-8 animate-pulse"
+                            />
+                          </MessageAvatar>
+                          <MessageContent className="justify-center">
+                            <Bubble variant="ghost" align="start">
+                              <BubbleContent className="flex h-8 items-center gap-1.5 overflow-visible py-0 text-sm text-muted-foreground">
+                                <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80" />
+                                <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80 [animation-delay:0.2s]" />
+                                <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80 [animation-delay:0.4s]" />
+                              </BubbleContent>
+                            </Bubble>
+                          </MessageContent>
+                        </Message>
+                      </MessageScrollerItem>
+                    )
+                  )
+                })()}
 
                 {error && (
                   <MessageScrollerItem scrollAnchor={isGenerating}>

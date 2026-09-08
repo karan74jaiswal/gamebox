@@ -97,18 +97,61 @@ export function ChatPreview({
     }
   }, [effectiveGameId, sandboxId, fetchPreviewUrl])
 
+  const reloadTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+
   const handleReloadIframe = React.useCallback(() => {
     setIsReloading(true)
+    if (reloadTimeoutRef.current) {
+      clearTimeout(reloadTimeoutRef.current)
+    }
+    reloadTimeoutRef.current = setTimeout(() => {
+      setIsReloading(false)
+    }, 8000)
+
     if (iframeRef.current && previewUrl) {
       try {
-        iframeRef.current.src = previewUrl
+        const url = new URL(previewUrl, window.location.origin)
+        url.searchParams.set("_t", Date.now().toString())
+        iframeRef.current.src = url.toString()
+        return
       } catch {
-        setIframeKey((prev) => prev + 1)
+        // Fallback to iframeKey remount
       }
-    } else {
-      setIframeKey((prev) => prev + 1)
     }
-  }, [previewUrl])
+
+    if (!previewUrl && effectiveGameId) {
+      void fetchPreviewUrl()
+      return
+    }
+
+    setIframeKey((prev) => prev + 1)
+  }, [previewUrl, effectiveGameId, fetchPreviewUrl])
+
+  React.useEffect(() => {
+    const handleCodeUpdated = (event: Event) => {
+      const customEvent = event as CustomEvent<{ id?: string }>
+      if (
+        !effectiveGameId ||
+        !customEvent.detail?.id ||
+        customEvent.detail.id === effectiveGameId
+      ) {
+        handleReloadIframe()
+      }
+    }
+
+    window.addEventListener("game-code-updated", handleCodeUpdated)
+    return () => {
+      window.removeEventListener("game-code-updated", handleCodeUpdated)
+    }
+  }, [effectiveGameId, handleReloadIframe])
+
+  React.useEffect(() => {
+    return () => {
+      if (reloadTimeoutRef.current) {
+        clearTimeout(reloadTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // Conditionally render nothing if sandboxId is missing
   if (!sandboxId) {
@@ -131,7 +174,12 @@ export function ChatPreview({
           </span>
 
           {/* Status badge */}
-          {!isIframeLoaded && !error ? (
+          {isReloading ? (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-500/10 px-2 py-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400">
+              <span className="size-1.5 animate-pulse rounded-full bg-blue-500" />
+              Updating
+            </span>
+          ) : !isIframeLoaded && !error ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-600 dark:text-amber-400">
               <span className="size-1.5 animate-pulse rounded-full bg-amber-500" />
               Starting
@@ -269,6 +317,10 @@ export function ChatPreview({
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
               onLoad={() => {
+                if (reloadTimeoutRef.current) {
+                  clearTimeout(reloadTimeoutRef.current)
+                  reloadTimeoutRef.current = null
+                }
                 setIsIframeLoaded(true)
                 setIsReloading(false)
               }}

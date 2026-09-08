@@ -1,5 +1,6 @@
-import { gateway, generateText } from "ai"
-import { google } from "@ai-sdk/google"
+import { generateText } from "ai"
+
+import { getLanguageModel } from "@/lib/ai/provider"
 
 /**
  * Generates a concise, catchy game title (2 to 5 words) based on the game description.
@@ -11,18 +12,7 @@ export async function generateGameTitle(
   if (!cleanPrompt) return null
 
   try {
-    const hasGatewayKey = Boolean(process.env.AI_GATEWAY_API_KEY)
-    const hasGoogleKey = Boolean(
-      process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_API_KEY
-    )
-
-    if (!hasGatewayKey && !hasGoogleKey) {
-      return null
-    }
-
-    const model = hasGatewayKey
-      ? gateway("google/gemini-2.5-flash")
-      : google("gemini-2.5-flash")
+    const model = getLanguageModel("google/gemini-2.5-flash")
 
     const { text } = await generateText({
       model,
