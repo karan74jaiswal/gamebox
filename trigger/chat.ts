@@ -217,7 +217,7 @@ export const gameChat = chat.agent({
 
     return stored
   },
-  onChatStart: async ({ chatId, writer }) => {
+  onChatStart: async ({ chatId, messages, writer }) => {
     const sandbox = await getGameSandbox(chatId)
     writer.write({
       type: "data-game-sandbox",
@@ -225,6 +225,44 @@ export const gameChat = chat.agent({
       data: { id: chatId, sandboxId: sandbox.id },
       transient: true,
     })
+
+    const firstUserMessage = messages.find((m) => m.role === "user")
+    const promptText =
+      typeof firstUserMessage?.content === "string"
+        ? firstUserMessage.content
+        : Array.isArray(firstUserMessage?.content)
+          ? firstUserMessage.content
+              .filter(
+                (p): p is { type: "text"; text: string } =>
+                  p.type === "text" &&
+                  typeof (p as { text?: unknown }).text === "string"
+              )
+              .map((p) => p.text)
+              .join(" ")
+              .trim()
+          : ""
+
+    if (promptText) {
+      chat.defer(async () => {
+        const generatedTitle = await generateGameTitle(promptText)
+        if (generatedTitle) {
+          await db
+            .update(games)
+            .set({
+              title: generatedTitle,
+              updatedAt: new Date(),
+            })
+            .where(eq(games.id, chatId))
+
+          chat.response.write({
+            type: "data-game-title",
+            id: "game-title",
+            data: { id: chatId, title: generatedTitle },
+            transient: true,
+          })
+        }
+      })
+    }
   },
   uiMessageStreamOptions: {
     onError: (error) => {
@@ -238,59 +276,6 @@ export const gameChat = chat.agent({
     },
   },
 
-  onTurnStart: async ({ chatId, uiMessages, clientData }) => {
-    await db
-      .update(games)
-      .set({
-        messages: uiMessages,
-        ...(clientData?.model ? { model: clientData.model } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(games.id, chatId))
-
-    // Only run title generation on the first user turn
-    const isFirstTurn =
-      uiMessages.filter((m) => m.role === "user").length === 1 &&
-      uiMessages.filter((m) => m.role === "assistant").length === 0
-
-    if (isFirstTurn) {
-      const firstUserMessage = uiMessages.find((m) => m.role === "user")
-      const textParts =
-        firstUserMessage && Array.isArray(firstUserMessage.parts)
-          ? firstUserMessage.parts.filter(
-              (p): p is { type: "text"; text: string } =>
-                p.type === "text" &&
-                typeof (p as { text?: unknown }).text === "string"
-            )
-          : []
-      const promptText = textParts
-        .map((p) => p.text)
-        .join(" ")
-        .trim()
-
-      if (promptText) {
-        chat.defer(async () => {
-          const generatedTitle = await generateGameTitle(promptText)
-          if (generatedTitle) {
-            await db
-              .update(games)
-              .set({
-                title: generatedTitle,
-                updatedAt: new Date(),
-              })
-              .where(eq(games.id, chatId))
-
-            chat.response.write({
-              type: "data-game-title",
-              id: "game-title",
-              data: { id: chatId, title: generatedTitle },
-              transient: true,
-            })
-          }
-        })
-      }
-    }
-  },
   onTurnComplete: async ({
     chatId,
     uiMessages,
