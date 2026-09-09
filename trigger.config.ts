@@ -1,4 +1,5 @@
 import { defineConfig } from "@trigger.dev/sdk"
+import { additionalFiles } from "@trigger.dev/build/extensions/core"
 
 export default defineConfig({
   project: "proj_dgvcxasnsdrzwgnurroa",
@@ -23,6 +24,11 @@ export default defineConfig({
   build: {
     // Preserve tool names, Zod schemas, and error class names (e.g. AbortError) during bundling
     keepNames: true,
+    extensions: [
+      additionalFiles({
+        files: ["./lib/games/runtime/**"],
+      }),
+    ],
   },
   dirs: ["trigger"],
 })

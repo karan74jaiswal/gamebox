@@ -3,6 +3,25 @@ import type { Sandbox } from "@daytona/sdk"
 import { eq } from "drizzle-orm"
 import { daytona } from "./client"
 import { db, games } from "@/lib/db"
+import {
+  getRuntimeSeedData,
+  getRuntimeDir,
+  getRuntimeEntries,
+  type RuntimeEntry,
+  type RuntimeFolder,
+  type RuntimeFile,
+  type RuntimeSeedData,
+} from "./seed"
+
+export {
+  getRuntimeDir,
+  getRuntimeEntries,
+  getRuntimeSeedData,
+  type RuntimeEntry,
+  type RuntimeFolder,
+  type RuntimeFile,
+  type RuntimeSeedData,
+}
 
 export const GAME_DIR = process.env.GAME_DIR || "/home/daytona/game"
 export const PREVIEW_PORT = 3000
@@ -93,10 +112,9 @@ export async function startGameServer(
   }
   return sandbox
 }
-
 /**
- * Creates a Daytona sandbox for a game, seeds $GAME_DIR/index.html
- * with "New game", and stores the sandboxId on the game record.
+ * Creates a Daytona sandbox for a game, seeds $GAME_DIR with all files,
+ * folders, and subfolders from lib/games/runtime/*, and stores the sandboxId on the game record.
  */
 export async function createGameSandbox(id: string): Promise<Sandbox> {
   // 1. Create the sandbox
@@ -104,7 +122,7 @@ export async function createGameSandbox(id: string): Promise<Sandbox> {
     labels: { gameId: id },
   })
 
-  // 2. Seed index.html in the official game directory
+  // 2. Ensure official game directory exists
   try {
     await sandbox.fs.createFolder(GAME_DIR, "755")
   } catch {
@@ -115,10 +133,51 @@ export async function createGameSandbox(id: string): Promise<Sandbox> {
     }
   }
 
-  const indexPath = path.posix.join(GAME_DIR, "index.html")
-  await sandbox.fs.uploadFile(Buffer.from("New game"), indexPath)
+  // 3. Seed all files, folders, and subfolders from runtime/*
+  const { folders, files } = await getRuntimeSeedData()
 
-  // 3. Save the sandboxId on the game record
+  // Create all folders and subfolders first (sorted shallowest to deepest)
+  for (const folder of folders) {
+    const remoteFolderPath = path.posix.join(GAME_DIR, folder.relativePath)
+    try {
+      await sandbox.fs.createFolder(remoteFolderPath, "755")
+    } catch {
+      try {
+        await sandbox.process.executeCommand(`mkdir -p "${remoteFolderPath}"`)
+      } catch {
+        // Ignore if directory already exists
+      }
+    }
+  }
+
+  // Upload all files into the sandbox
+  for (const file of files) {
+    const remoteFilePath = path.posix.join(GAME_DIR, file.relativePath)
+    const parentDir = path.posix.dirname(remoteFilePath)
+
+    if (parentDir !== GAME_DIR) {
+      try {
+        await sandbox.fs.createFolder(parentDir, "755")
+      } catch {
+        try {
+          await sandbox.process.executeCommand(`mkdir -p "${parentDir}"`)
+        } catch {
+          // Ignore
+        }
+      }
+    }
+
+    const content = await file.read()
+    await sandbox.fs.uploadFile(content, remoteFilePath)
+  }
+
+  // Fallback if no files were found in runtime directory
+  if (files.length === 0) {
+    const indexPath = path.posix.join(GAME_DIR, "index.html")
+    await sandbox.fs.uploadFile(Buffer.from("New game"), indexPath)
+  }
+
+  // 4. Save the sandboxId on the game record
   await db
     .update(games)
     .set({
@@ -129,3 +188,5 @@ export async function createGameSandbox(id: string): Promise<Sandbox> {
 
   return sandbox
 }
+
+export const createSandbox = createGameSandbox
