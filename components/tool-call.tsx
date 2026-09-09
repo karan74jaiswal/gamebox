@@ -13,8 +13,12 @@ export type ToolStatus = "active" | "done" | "failed"
 
 /**
  * Determines whether a tool part is active, done, or failed using official AI SDK states.
+ * If isGenerating is false, any tool call that hasn't completed is considered failed.
  */
-export function getToolStatus(part: ToolPart): ToolStatus {
+export function getToolStatus(
+  part: ToolPart,
+  isGenerating: boolean = true
+): ToolStatus {
   const state = part.state
   const errorText = "errorText" in part ? part.errorText : undefined
   const output = "output" in part ? part.output : undefined
@@ -43,6 +47,11 @@ export function getToolStatus(part: ToolPart): ToolStatus {
     return "done"
   }
 
+  // If generation has concluded and the tool call never completed, it was aborted/interrupted
+  if (!isGenerating) {
+    return "failed"
+  }
+
   return "active"
 }
 
@@ -63,6 +72,22 @@ export function cleanPath(rawPath?: unknown): string {
 }
 
 /**
+ * Helper to format byte counts into human-readable strings.
+ */
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  return `${(bytes / 1024).toFixed(1)} KB`
+}
+
+/**
+ * Helper to count lines in a text string.
+ */
+export function countLines(text?: unknown): number {
+  if (typeof text !== "string" || !text) return 0
+  return text.split("\n").length
+}
+
+/**
  * Resolves the display text for tool actions.
  */
 export function formatToolDisplay(
@@ -79,42 +104,60 @@ export function formatToolDisplay(
 
   switch (toolName) {
     case "write_file": {
+      const content = typeof input?.content === "string" ? input.content : ""
+      const lines = countLines(content)
+      const size = content ? formatFileSize(content.length) : ""
+
       if (status === "active") {
         return {
           action: filePath ? "Writing" : "Writing file",
           target: filePath,
-          suffix: "...",
+          suffix: content
+            ? `(${lines.toLocaleString()} lines · ${size})...`
+            : "...",
         }
       }
       if (status === "done") {
         return {
           action: filePath ? "Wrote" : "Wrote file",
           target: filePath,
+          suffix: content
+            ? `(${lines.toLocaleString()} lines · ${size})`
+            : undefined,
         }
       }
       return {
         action: filePath ? "Failed to write" : "Failed to write file",
         target: filePath,
+        suffix: content
+          ? `(${lines.toLocaleString()} lines · ${size})`
+          : undefined,
       }
     }
 
     case "replace_text": {
+      const newText = typeof input?.newText === "string" ? input.newText : ""
+      const lines = countLines(newText)
+
       if (status === "active") {
         return {
           action: filePath ? "Updating" : "Updating file",
           target: filePath,
-          suffix: "...",
+          suffix:
+            lines > 1 ? `(${lines.toLocaleString()} lines)...` : "...",
         }
       }
       if (status === "done") {
         return {
           action: filePath ? "Updated" : "Updated file",
           target: filePath,
+          suffix: lines > 1 ? `(${lines.toLocaleString()} lines)` : undefined,
         }
       }
       return {
         action: filePath ? "Failed to update" : "Failed to update file",
         target: filePath,
+        suffix: lines > 1 ? `(${lines.toLocaleString()} lines)` : undefined,
       }
     }
 
@@ -127,9 +170,21 @@ export function formatToolDisplay(
         }
       }
       if (status === "done") {
+        let sizeInfo = ""
+        if (
+          output &&
+          typeof output === "object" &&
+          output !== null &&
+          "content" in output &&
+          typeof (output as { content?: unknown }).content === "string"
+        ) {
+          const content = (output as { content: string }).content
+          sizeInfo = ` (${countLines(content).toLocaleString()} lines)`
+        }
         return {
           action: filePath ? "Read" : "Read file",
           target: filePath,
+          suffix: sizeInfo || undefined,
         }
       }
       return {
@@ -208,6 +263,7 @@ export function formatToolDisplay(
 export interface ToolCallProps {
   part: MessagePart
   className?: string
+  isGenerating?: boolean
 }
 
 /**
@@ -215,13 +271,17 @@ export interface ToolCallProps {
  * Uses the official AI SDK `isToolUIPart` and `getToolName` APIs.
  * Does not render full code diffs or a collapsible drawer per design requirements.
  */
-export function ToolCall({ part, className }: ToolCallProps) {
+export function ToolCall({
+  part,
+  className,
+  isGenerating = true,
+}: ToolCallProps) {
   if (!isToolUIPart(part)) {
     return null
   }
 
   const toolName = getToolName(part)
-  const status = getToolStatus(part)
+  const status = getToolStatus(part, isGenerating)
   const input =
     "input" in part && typeof part.input === "object" && part.input !== null
       ? (part.input as Record<string, unknown>)
@@ -267,7 +327,8 @@ export function ToolCall({ part, className }: ToolCallProps) {
           <span
             className={cn(
               status === "failed" && "text-destructive",
-              status === "active" && "font-medium text-foreground"
+              (status === "active" || status === "done") &&
+                "font-mono text-[11px] text-muted-foreground"
             )}
           >
             {suffix}

@@ -15,6 +15,38 @@ import { tools, setGameChatContext } from "@/lib/games/tools"
 
 const streamErrorKey = locals.create<string>("game-chat.streamError")
 
+/**
+ * Executes a database operation with exponential backoff retry and full cause logging.
+ * Prevents transient Neon serverless wake-up or connection timeouts from aborting active chat turns.
+ */
+async function withDbRetry<T>(
+  operation: () => Promise<T>,
+  context: string,
+  retries = 3,
+  delayMs = 500
+): Promise<T> {
+  let attempt = 0
+  while (true) {
+    try {
+      return await operation()
+    } catch (err: unknown) {
+      attempt++
+      const cause = (err as { cause?: unknown })?.cause
+      console.error(
+        `[game-chat] Database operation failed (${context}) [Attempt ${attempt}/${retries}]:`,
+        err,
+        cause ? { cause } : ""
+      )
+      if (attempt >= retries) {
+        throw err
+      }
+      await new Promise((res) =>
+        setTimeout(res, delayMs * Math.pow(2, attempt - 1))
+      )
+    }
+  }
+}
+
 export const gameChat = chat.agent({
   id: "game-chat",
   tools,
@@ -23,18 +55,33 @@ export const gameChat = chat.agent({
     provider: z.string().optional(),
   }),
   hydrateMessages: async ({ chatId, trigger, incomingMessages }) => {
-    const [record] = await db
-      .select({ messages: games.messages })
-      .from(games)
-      .where(eq(games.id, chatId))
-      .limit(1)
+    const [record] = await withDbRetry(
+      () =>
+        db
+          .select({ messages: games.messages })
+          .from(games)
+          .where(eq(games.id, chatId))
+          .limit(1),
+      "hydrateMessages:select"
+    )
     const stored = (record?.messages as UIMessage[]) ?? []
 
     if (upsertIncomingMessage(stored, { trigger, incomingMessages })) {
-      await db
-        .update(games)
-        .set({ messages: stored, updatedAt: new Date() })
-        .where(eq(games.id, chatId))
+      try {
+        await withDbRetry(
+          () =>
+            db
+              .update(games)
+              .set({ messages: stored, updatedAt: new Date() })
+              .where(eq(games.id, chatId)),
+          "hydrateMessages:update"
+        )
+      } catch (err) {
+        console.error(
+          `[game-chat] Failed to persist incoming message during hydration for game ${chatId}. Continuing turn in-memory:`,
+          err
+        )
+      }
     }
 
     return stored
@@ -67,22 +114,33 @@ export const gameChat = chat.agent({
 
     if (promptText) {
       chat.defer(async () => {
-        const generatedTitle = await generateGameTitle(promptText)
-        if (generatedTitle) {
-          await db
-            .update(games)
-            .set({
-              title: generatedTitle,
-              updatedAt: new Date(),
-            })
-            .where(eq(games.id, chatId))
+        try {
+          const generatedTitle = await generateGameTitle(promptText)
+          if (generatedTitle) {
+            await withDbRetry(
+              () =>
+                db
+                  .update(games)
+                  .set({
+                    title: generatedTitle,
+                    updatedAt: new Date(),
+                  })
+                  .where(eq(games.id, chatId)),
+              "onChatStart:updateTitle"
+            )
 
-          chat.response.write({
-            type: "data-game-title",
-            id: "game-title",
-            data: { id: chatId, title: generatedTitle },
-            transient: true,
-          })
+            chat.response.write({
+              type: "data-game-title",
+              id: "game-title",
+              data: { id: chatId, title: generatedTitle },
+              transient: true,
+            })
+          }
+        } catch (err) {
+          console.error(
+            `[game-chat] Failed to generate or save game title for ${chatId}:`,
+            err
+          )
         }
       })
     }
@@ -90,13 +148,29 @@ export const gameChat = chat.agent({
   onTurnStart: async ({ chatId }) => {
     setGameChatContext(chatId)
   },
+  onBeforeTurnComplete: async ({ writer, chatId, stopped, finishReason }) => {
+    const streamError = locals.get(streamErrorKey)
+    const wasStopped = Boolean(stopped) || chat.isStopped()
+    if (!wasStopped && (Boolean(streamError) || finishReason === "error")) {
+      const sanitized =
+        streamError || sanitizeErrorMessage("Generation failed.")
+      writer.write({
+        type: "data-turn-error",
+        id: "turn-error",
+        data: { id: chatId, errorText: sanitized },
+        transient: true,
+      })
+    }
+  },
   uiMessageStreamOptions: {
     sendReasoning: true,
+
     onError: (error) => {
       if (isAbortError(error) || chat.isStopped()) {
         locals.set(streamErrorKey, undefined)
         return ""
       }
+      console.error("[game-chat] Model stream error:", error)
       const message = sanitizeErrorMessage(error)
       locals.set(streamErrorKey, message)
       return message
@@ -120,7 +194,8 @@ export const gameChat = chat.agent({
       Boolean(stopped) || chat.isStopped() || isAbortError(error)
 
     const isFailedTurn =
-      !wasStopped && (Boolean(error) || finishReason === "error")
+      !wasStopped &&
+      (Boolean(error) || Boolean(streamError) || finishReason === "error")
 
     const lastIdx = finalMessages.length - 1
     const lastMsg = lastIdx >= 0 ? finalMessages[lastIdx] : undefined
@@ -181,15 +256,19 @@ export const gameChat = chat.agent({
       }
     }
 
-    await db
-      .update(games)
-      .set({
-        messages: finalMessages,
-        lastEventId: lastEventId ?? null,
-        ...(clientData?.model ? { model: clientData.model } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(games.id, chatId))
+    await withDbRetry(
+      () =>
+        db
+          .update(games)
+          .set({
+            messages: finalMessages,
+            lastEventId: lastEventId ?? null,
+            ...(clientData?.model ? { model: clientData.model } : {}),
+            updatedAt: new Date(),
+          })
+          .where(eq(games.id, chatId)),
+      "onTurnComplete:update"
+    )
 
     chat.history.set(finalMessages)
   },
@@ -208,14 +287,17 @@ export const gameChat = chat.agent({
       instructions,
       messages: sanitizedMessages,
       abortSignal: signal,
+
       stopWhen: stepCountIs(50),
-      maxRetries: 0,
+      maxRetries: 2,
       providerOptions: {
         vertex: {
           thinkingConfig: {
             includeThoughts: true,
           },
+          streamFunctionCallArguments: true,
         },
+
         google: {
           thinkingConfig: {
             includeThoughts: true,

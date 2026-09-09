@@ -4,19 +4,25 @@ export default defineConfig({
   project: "proj_dgvcxasnsdrzwgnurroa",
   runtime: "node-24",
   logLevel: "log",
-  // The max compute seconds a task is allowed to run. If the task run exceeds this duration, it will be stopped.
-  // You can override this on an individual task.
-  // See https://trigger.dev/docs/runs/max-duration
+  // Streams console.log and console.error directly to local terminal in dev
+  enableConsoleLogging: true,
+  // Ensure sufficient memory for multi-turn sessions with full game code files
+  machine: "small-1x",
+  // 1-hour session lifetime for interactive multi-turn chat agent conversations
   maxDuration: 3600,
   retries: {
     enabledInDev: true,
     default: {
-      maxAttempts: 1,
+      maxAttempts: 3,
       minTimeoutInMs: 1000,
       maxTimeoutInMs: 10000,
       factor: 2,
       randomize: true,
     },
+  },
+  build: {
+    // Preserve tool names, Zod schemas, and error class names (e.g. AbortError) during bundling
+    keepNames: true,
   },
   dirs: ["trigger"],
 })

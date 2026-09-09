@@ -115,7 +115,7 @@ export function ChatThread({
     id,
     messages: initialMessages,
     transport,
-    resume: false,
+    resume: true,
     onFinish: () => {
       // If a code refresh was debounced, flush it promptly on turn completion
       if (refreshDebounceTimerRef.current) {
@@ -157,6 +157,32 @@ export function ChatThread({
               detail: { id: payload.id || id, sandboxId: payload.sandboxId },
             })
           )
+        }
+      }
+      if (
+        part.type === "data-turn-error" &&
+        typeof part.data === "object" &&
+        part.data !== null
+      ) {
+        const payload = part.data as { errorText?: string }
+        if (payload.errorText) {
+          setMessages((prev) => {
+            if (prev.length === 0) return prev
+            const lastIdx = prev.length - 1
+            const lastMsg = prev[lastIdx]
+            if (lastMsg.role !== "assistant") return prev
+            return [
+              ...prev.slice(0, lastIdx),
+              {
+                ...lastMsg,
+                metadata: {
+                  ...(lastMsg.metadata as object),
+                  isError: true,
+                  errorText: payload.errorText,
+                },
+              },
+            ]
+          })
         }
       }
     },
@@ -547,6 +573,9 @@ export function ChatThread({
                                           <ToolCall
                                             key={part.toolCallId}
                                             part={part}
+                                            isGenerating={
+                                              isGenerating && isLast
+                                            }
                                           />
                                         )
                                       }
