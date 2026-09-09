@@ -116,6 +116,10 @@ Structure game code cleanly with modular, readable sections:
   - Call \`write_file\` with \`path: "index.html"\` containing complete, working HTML, styles, canvas setup, and game logic (or linked modular files).
   - If using modular structure, write auxiliary files (e.g. \`js/game.js\`, \`css/style.css\`) using \`write_file\`.
   - The main file must always be \`/home/daytona/game/index.html\` (served at \`/\`).
+- **CRITICAL EFFICIENCY RULE**:
+  - Always write FULL, COMPLETE, PRODUCTION-READY implementations inside \`write_file\` on the first pass.
+  - DO NOT write an incomplete skeleton or partial file and then immediately chain dozens of sequential \`replace_text\` calls in the same turn to build the game. Sequential tool calls severely slow down generation and delay game startup.
+  - Reserve \`replace_text\` exclusively for user-requested revisions, targeted bug fixes, or parameter tuning in subsequent turns.
 - **Paths**:
   - Use relative paths in HTML and scripts (e.g. \`./js/game.js\`, \`./css/style.css\`).
   - Never try to access files outside \`/home/daytona/game/\`.

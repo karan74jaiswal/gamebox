@@ -16,7 +16,10 @@ interface GamePageProps {
   }>
 }
 
-export default async function GamePage({ params, searchParams }: GamePageProps) {
+export default async function GamePage({
+  params,
+  searchParams,
+}: GamePageProps) {
   await auth.protect({ unauthenticatedUrl: "/sign-in" })
 
   const { id } = await params
@@ -51,4 +54,3 @@ export default async function GamePage({ params, searchParams }: GamePageProps) 
     </div>
   )
 }
-

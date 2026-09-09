@@ -1,16 +1,16 @@
-import { parseEnv } from "@neon/env";
-import { neon, Pool } from "@neondatabase/serverless";
-import { drizzle as drizzleHttp } from "drizzle-orm/neon-http";
-import { drizzle as drizzleWs } from "drizzle-orm/neon-serverless";
+import { parseEnv } from "@neon/env"
+import { neon, Pool } from "@neondatabase/serverless"
+import { drizzle as drizzleHttp } from "drizzle-orm/neon-http"
+import { drizzle as drizzleWs } from "drizzle-orm/neon-serverless"
 
-import neonConfig from "@/neon";
-import * as schema from "./schema";
+import neonConfig from "@/neon"
+import * as schema from "./schema"
 
 // 1. Type-safe env validation directly against neon.ts
 const { postgres } = parseEnv(neonConfig, [
   "DATABASE_URL",
   "DATABASE_URL_UNPOOLED",
-]);
+])
 
 /**
  * 1. Pooled Connection (`db`)
@@ -25,8 +25,8 @@ const { postgres } = parseEnv(neonConfig, [
  * - Best for: High-concurrency web requests, Next.js Server Components, Server Actions,
  *   API Route Handlers, and AI streaming. Works in any environment (Railway, Cloudflare, Docker).
  */
-const sqlPooled = neon(postgres.databaseUrl);
-export const db = drizzleHttp({ client: sqlPooled, schema });
+const sqlPooled = neon(postgres.databaseUrl)
+export const db = drizzleHttp({ client: sqlPooled, schema })
 
 /**
  * 2. Unpooled / Direct Connection (`dbUnpooled` / `dbDirect`)
@@ -40,9 +40,9 @@ export const db = drizzleHttp({ client: sqlPooled, schema });
  *   - Temporary tables
  *   - Heavy analytical queries / batch jobs avoiding pooler slots
  */
-const sqlUnpooled = neon(postgres.databaseUrlUnpooled);
-export const dbUnpooled = drizzleHttp({ client: sqlUnpooled, schema });
-export const dbDirect = dbUnpooled;
+const sqlUnpooled = neon(postgres.databaseUrlUnpooled)
+export const dbUnpooled = drizzleHttp({ client: sqlUnpooled, schema })
+export const dbDirect = dbUnpooled
 
 /**
  * 3. WebSocket Pool Connection (`dbTx` / `dbPool`)
@@ -53,20 +53,20 @@ export const dbDirect = dbUnpooled;
  * Uses a global singleton in development to avoid connection leaks during Fast Refresh.
  * Best for: Trigger.dev background workers and multi-step atomic operations.
  */
-const globalForDb = globalThis as unknown as { pool?: Pool };
+const globalForDb = globalThis as unknown as { pool?: Pool }
 
 export const pool =
   globalForDb.pool ??
   new Pool({
     connectionString: postgres.databaseUrl,
-  });
+  })
 
 if (process.env.NODE_ENV !== "production") {
-  globalForDb.pool = pool;
+  globalForDb.pool = pool
 }
 
-export const dbPool = drizzleWs({ client: pool, schema });
-export const dbTx = dbPool;
+export const dbPool = drizzleWs({ client: pool, schema })
+export const dbTx = dbPool
 
 // Re-export all schema models and inferred types
-export * from "./schema";
+export * from "./schema"

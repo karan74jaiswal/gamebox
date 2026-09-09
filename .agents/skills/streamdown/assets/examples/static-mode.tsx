@@ -1,7 +1,7 @@
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { Streamdown } from "streamdown";
-import "katex/dist/katex.min.css";
+import { code } from "@streamdown/code"
+import { math } from "@streamdown/math"
+import { Streamdown } from "streamdown"
+import "katex/dist/katex.min.css"
 
 export default function BlogPost({ content }: { content: string }) {
   return (
@@ -13,5 +13,5 @@ export default function BlogPost({ content }: { content: string }) {
     >
       {content}
     </Streamdown>
-  );
+  )
 }

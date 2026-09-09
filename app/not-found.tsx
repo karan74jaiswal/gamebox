@@ -25,8 +25,8 @@ export default function NotFound() {
             Game not found
           </EmptyTitle>
           <EmptyDescription className="text-base text-muted-foreground">
-            The game you are looking for doesn&apos;t exist, has been removed, or
-            is no longer accessible.
+            The game you are looking for doesn&apos;t exist, has been removed,
+            or is no longer accessible.
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent className="mt-2 flex flex-row items-center justify-center gap-3">

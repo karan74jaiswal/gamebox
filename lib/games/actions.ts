@@ -10,9 +10,7 @@ import { db, games, type Game } from "@/lib/db"
 import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
 
 export type CreateGameInput =
-  | { title?: string; prompt?: string; model?: string }
-  | string
-  | FormData
+  { title?: string; prompt?: string; model?: string } | string | FormData
 
 export async function createGame(input: CreateGameInput): Promise<Game> {
   let promptText = ""
@@ -22,9 +20,7 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
     promptText = input
   } else if (input instanceof FormData) {
     promptText =
-      input.get("prompt")?.toString() ||
-      input.get("title")?.toString() ||
-      ""
+      input.get("prompt")?.toString() || input.get("title")?.toString() || ""
     modelChoice = input.get("model")?.toString()
   } else if (input && typeof input === "object") {
     promptText =
@@ -86,4 +82,3 @@ export async function saveGameMessages(
         : eq(games.id, gameId)
     )
 }
-

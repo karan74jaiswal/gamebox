@@ -36,13 +36,17 @@ export function Reasoning({ part, isStreaming }: ReasoningProps) {
     >
       <CollapsibleTrigger className="flex w-full cursor-pointer items-center justify-between px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground">
         <div className="flex items-center gap-2">
-          {isStreaming ? (
+          {activeStreaming ? (
             <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
           ) : (
             <Brain className="size-3.5 shrink-0 text-muted-foreground" />
           )}
-          <span className={cn(isStreaming && "animate-pulse font-medium text-foreground")}>
-            {isStreaming ? "Thinking..." : "Thought process"}
+          <span
+            className={cn(
+              activeStreaming && "animate-pulse font-medium text-foreground"
+            )}
+          >
+            {activeStreaming ? "Thinking..." : "Thought process"}
           </span>
         </div>
         <ChevronDown
@@ -53,8 +57,8 @@ export function Reasoning({ part, isStreaming }: ReasoningProps) {
         />
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t border-border/20 px-3 pt-1.5 pb-2.5 text-xs leading-relaxed">
-        <div className="max-h-60 overflow-y-auto whitespace-pre-wrap font-sans text-muted-foreground/90 select-text">
-          {cleanText || (isStreaming ? "Deliberating..." : "")}
+        <div className="max-h-60 overflow-y-auto font-sans whitespace-pre-wrap text-muted-foreground/90 select-text">
+          {cleanText || (activeStreaming ? "Deliberating..." : "")}
         </div>
       </CollapsibleContent>
     </Collapsible>

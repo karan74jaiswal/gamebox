@@ -1,15 +1,15 @@
-"use client";
+"use client"
 
-import { useChat } from "@ai-sdk/react";
-import { code } from "@streamdown/code";
-import { math } from "@streamdown/math";
-import { mermaid } from "@streamdown/mermaid";
-import { Streamdown } from "streamdown";
-import "katex/dist/katex.min.css";
+import { useChat } from "@ai-sdk/react"
+import { code } from "@streamdown/code"
+import { math } from "@streamdown/math"
+import { mermaid } from "@streamdown/mermaid"
+import { Streamdown } from "streamdown"
+import "katex/dist/katex.min.css"
 
 export default function FullFeaturedChat() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } =
-    useChat();
+    useChat()
 
   return (
     <div className="flex h-screen flex-col">
@@ -36,9 +36,9 @@ export default function FullFeaturedChat() {
               linkSafety={{
                 enabled: true,
                 onLinkCheck: (url) => {
-                  const trusted = ["github.com", "npmjs.com"];
-                  const hostname = new URL(url).hostname;
-                  return trusted.some((d) => hostname.endsWith(d));
+                  const trusted = ["github.com", "npmjs.com"]
+                  const hostname = new URL(url).hostname
+                  return trusted.some((d) => hostname.endsWith(d))
                 },
               }}
               plugins={{ code, mermaid, math }}
@@ -59,5 +59,5 @@ export default function FullFeaturedChat() {
         />
       </form>
     </div>
-  );
+  )
 }

@@ -25,7 +25,10 @@ function getVertex(): ReturnType<typeof createVertex> {
       googleAuthOptions: {
         credentials: {
           client_email: process.env.GOOGLE_VERTEX_CLIENT_EMAIL,
-          private_key: process.env.GOOGLE_VERTEX_PRIVATE_KEY.replace(/\\n/g, "\n"),
+          private_key: process.env.GOOGLE_VERTEX_PRIVATE_KEY.replace(
+            /\\n/g,
+            "\n"
+          ),
         },
       },
     })
@@ -50,10 +53,10 @@ const PROVIDER_HANDLERS: Record<string, ProviderHandler> = {
     hasOwnKey: () =>
       Boolean(
         process.env.GOOGLE_APPLICATION_CREDENTIALS ||
-          process.env.GOOGLE_VERTEX_PROJECT ||
-          process.env.GOOGLE_VERTEX_CLIENT_EMAIL ||
-          process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-          process.env.GOOGLE_API_KEY
+        process.env.GOOGLE_VERTEX_PROJECT ||
+        process.env.GOOGLE_VERTEX_CLIENT_EMAIL ||
+        process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
+        process.env.GOOGLE_API_KEY
       ),
     createDirect: (modelName: string) => {
       // Prioritize Google Cloud Vertex AI (uses GCP promotional credits)

@@ -91,6 +91,7 @@ export const gameChat = chat.agent({
     setGameChatContext(chatId)
   },
   uiMessageStreamOptions: {
+    sendReasoning: true,
     onError: (error) => {
       if (isAbortError(error) || chat.isStopped()) {
         locals.set(streamErrorKey, undefined)
@@ -209,6 +210,18 @@ export const gameChat = chat.agent({
       abortSignal: signal,
       stopWhen: stepCountIs(50),
       maxRetries: 0,
+      providerOptions: {
+        vertex: {
+          thinkingConfig: {
+            includeThoughts: true,
+          },
+        },
+        google: {
+          thinkingConfig: {
+            includeThoughts: true,
+          },
+        },
+      },
     })
   },
 })

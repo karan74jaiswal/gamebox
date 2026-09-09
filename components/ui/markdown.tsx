@@ -23,7 +23,7 @@ export function Markdown({
       caret={caret ?? (isStreaming ? "block" : undefined)}
       linkSafety={{ enabled: false }}
       className={cn(
-        "w-full min-w-0 break-words text-sm leading-relaxed text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        "w-full min-w-0 text-sm leading-relaxed break-words text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
         className
       )}
       components={{
@@ -66,7 +66,7 @@ export function Markdown({
         ul: ({ className: c, ...p }) => (
           <ul
             className={cn(
-              "my-2 list-disc pl-5 space-y-1 marker:text-muted-foreground",
+              "my-2 list-disc space-y-1 pl-5 marker:text-muted-foreground",
               c
             )}
             {...p}
@@ -75,7 +75,7 @@ export function Markdown({
         ol: ({ className: c, ...p }) => (
           <ol
             className={cn(
-              "my-2 list-decimal pl-5 space-y-1 marker:text-muted-foreground",
+              "my-2 list-decimal space-y-1 pl-5 marker:text-muted-foreground",
               c
             )}
             {...p}
@@ -87,7 +87,7 @@ export function Markdown({
         blockquote: ({ className: c, ...p }) => (
           <blockquote
             className={cn(
-              "my-2 border-l-2 border-border pl-3 italic text-muted-foreground",
+              "my-2 border-l-2 border-border pl-3 text-muted-foreground italic",
               c
             )}
             {...p}
@@ -99,7 +99,7 @@ export function Markdown({
             return (
               <code
                 className={cn(
-                  "rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground border border-border/50",
+                  "rounded border border-border/50 bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground",
                   c
                 )}
                 {...p}
@@ -126,7 +126,7 @@ export function Markdown({
         a: ({ className: c, ...p }) => (
           <a
             className={cn(
-              "text-primary underline underline-offset-4 hover:opacity-80 transition-opacity",
+              "text-primary underline underline-offset-4 transition-opacity hover:opacity-80",
               c
             )}
             target="_blank"

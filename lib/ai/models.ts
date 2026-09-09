@@ -118,7 +118,8 @@ export const DEFAULT_MODEL_ID = "google/gemini-2.5-flash"
  */
 export function resolveModel(identifier?: string): AIModelOption {
   const defaultOption =
-    AVAILABLE_MODELS.find((m) => m.id === DEFAULT_MODEL_ID) || AVAILABLE_MODELS[0]
+    AVAILABLE_MODELS.find((m) => m.id === DEFAULT_MODEL_ID) ||
+    AVAILABLE_MODELS[0]
 
   if (!identifier) {
     return defaultOption

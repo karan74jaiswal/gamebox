@@ -131,7 +131,10 @@ export async function GET(
     const baseTag = `<base href="/api/games/${id}/preview/live/">`
 
     if (html.includes("<head>")) {
-      html = html.replace("<head>", `<head>\n  ${baseTag}\n  ${SCROLLBAR_STYLE}`)
+      html = html.replace(
+        "<head>",
+        `<head>\n  ${baseTag}\n  ${SCROLLBAR_STYLE}`
+      )
     } else if (html.includes("<html>")) {
       html = html.replace(
         "<html>",

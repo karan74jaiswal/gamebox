@@ -16,4 +16,3 @@ export async function AppLayout({ children }: { children: React.ReactNode }) {
 }
 
 export default AppLayout
-

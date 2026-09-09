@@ -9,7 +9,9 @@ import type { gameChat } from "@/trigger/chat"
 
 const startSession = chat.createStartSessionAction<typeof gameChat>("game-chat")
 
-export async function startChatSession(params: ChatStartSessionParams<typeof gameChat>) {
+export async function startChatSession(
+  params: ChatStartSessionParams<typeof gameChat>
+) {
   const { userId, orgId } = await clerkAuth()
   if (!userId || !orgId) {
     throw new Error("Unauthorized")

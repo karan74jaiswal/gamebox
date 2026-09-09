@@ -27,7 +27,8 @@ export function GameChat({
 
   React.useEffect(() => {
     const handleSandboxUpdate = (e: Event) => {
-      const detail = (e as CustomEvent<{ id?: string; sandboxId?: string }>).detail
+      const detail = (e as CustomEvent<{ id?: string; sandboxId?: string }>)
+        .detail
       if (detail?.sandboxId && (!detail.id || detail.id === props.id)) {
         setSandboxId(detail.sandboxId)
       }
@@ -117,18 +118,14 @@ export function GameChat({
       orientation="horizontal"
       className={cn("h-full w-full", className)}
     >
-      <ResizablePanel
-        id="chat"
-        defaultSize={100}
-        minSize={30}
-      >
+      <ResizablePanel id="chat" defaultSize={100} minSize={30}>
         <ChatThread {...props} onSandboxReady={setSandboxId} />
       </ResizablePanel>
 
       <ResizableHandle
         withHandle
         className={cn(
-          !sandboxId && "hidden pointer-events-none",
+          !sandboxId && "pointer-events-none hidden",
           isOpening && "transition-opacity duration-700"
         )}
       />

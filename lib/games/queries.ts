@@ -42,4 +42,3 @@ export async function listGames(): Promise<SidebarGame[]> {
     .where(eq(games.orgId, orgId))
     .orderBy(desc(games.createdAt))
 }
-

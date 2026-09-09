@@ -1,11 +1,11 @@
-"use client";
+"use client"
 
-import { useChat } from "@ai-sdk/react";
-import { Streamdown } from "streamdown";
+import { useChat } from "@ai-sdk/react"
+import { Streamdown } from "streamdown"
 
 export default function ChatPage() {
   const { messages, input, handleInputChange, handleSubmit, isLoading } =
-    useChat();
+    useChat()
 
   return (
     <div className="flex h-screen flex-col">
@@ -36,5 +36,5 @@ export default function ChatPage() {
         />
       </form>
     </div>
-  );
+  )
 }

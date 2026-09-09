@@ -25,7 +25,9 @@ export function setGameChatContext(chatId: string, sandbox?: Sandbox): void {
  * Resolves the active Daytona sandbox instance for the current execution context.
  * Checks the cached sandbox in locals first, then resolves via chatId if available.
  */
-export async function getActiveGameSandbox(chatIdParam?: string): Promise<Sandbox> {
+export async function getActiveGameSandbox(
+  chatIdParam?: string
+): Promise<Sandbox> {
   const cachedSandbox = locals.get(activeSandboxKey)
   if (cachedSandbox) {
     return cachedSandbox
@@ -62,7 +64,10 @@ export function resolveGamePath(
   let candidate: string
 
   if (path.posix.isAbsolute(sanitized)) {
-    if (sanitized === normalizedGameDir || sanitized.startsWith(normalizedGameDir + "/")) {
+    if (
+      sanitized === normalizedGameDir ||
+      sanitized.startsWith(normalizedGameDir + "/")
+    ) {
       candidate = path.posix.normalize(sanitized)
     } else if (sanitized === "/game" || sanitized.startsWith("/game/")) {
       candidate = path.posix.normalize(
@@ -75,11 +80,16 @@ export function resolveGamePath(
       )
     }
   } else {
-    candidate = path.posix.normalize(path.posix.join(normalizedGameDir, sanitized))
+    candidate = path.posix.normalize(
+      path.posix.join(normalizedGameDir, sanitized)
+    )
   }
 
   // Strict boundary check: candidate must be equal to or inside normalizedGameDir
-  if (candidate !== normalizedGameDir && !candidate.startsWith(normalizedGameDir + "/")) {
+  if (
+    candidate !== normalizedGameDir &&
+    !candidate.startsWith(normalizedGameDir + "/")
+  ) {
     throw new Error(
       `Access denied: "${targetPath}" resolves to "${candidate}", which escapes the sandbox game directory (${normalizedGameDir}).`
     )
@@ -115,18 +125,9 @@ export const replaceTextInputSchema = z.object({
     .string()
     .optional()
     .describe("The exact text or code snippet in the file to replace"),
-  old_text: z
-    .string()
-    .optional()
-    .describe("Alias for oldText"),
-  newText: z
-    .string()
-    .optional()
-    .describe("The replacement text to insert"),
-  new_text: z
-    .string()
-    .optional()
-    .describe("Alias for newText"),
+  old_text: z.string().optional().describe("Alias for oldText"),
+  newText: z.string().optional().describe("The replacement text to insert"),
+  new_text: z.string().optional().describe("Alias for newText"),
   replaceAll: z
     .boolean()
     .optional()
@@ -237,7 +238,14 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     description:
       "Replace specific text or code snippets in an existing file inside the Daytona sandbox game directory. Use this for targeted edits, bug fixes, or modifying game logic without rewriting the whole file.",
     inputSchema: replaceTextInputSchema,
-    execute: async ({ path: filePath, oldText, old_text, newText, new_text, replaceAll }) => {
+    execute: async ({
+      path: filePath,
+      oldText,
+      old_text,
+      newText,
+      new_text,
+      replaceAll,
+    }) => {
       const targetOldText = oldText ?? old_text
       const targetNewText = newText ?? new_text
 
@@ -286,13 +294,18 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
         if (replaceAll) {
           count = existingContent.split(targetOldText).length - 1
-          updatedContent = existingContent.split(targetOldText).join(targetNewText)
+          updatedContent = existingContent
+            .split(targetOldText)
+            .join(targetNewText)
         } else {
           count = 1
           updatedContent = existingContent.replace(targetOldText, targetNewText)
         }
 
-        await sandbox.fs.uploadFile(Buffer.from(updatedContent, "utf-8"), fullPath)
+        await sandbox.fs.uploadFile(
+          Buffer.from(updatedContent, "utf-8"),
+          fullPath
+        )
 
         return {
           success: true,

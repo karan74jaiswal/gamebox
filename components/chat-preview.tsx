@@ -161,7 +161,7 @@ export function ChatPreview({
   return (
     <div
       className={cn(
-        "flex h-full w-full flex-col overflow-hidden bg-background text-foreground animate-in fade-in-50 duration-700",
+        "flex h-full w-full animate-in flex-col overflow-hidden bg-background text-foreground duration-700 fade-in-50",
         className
       )}
     >
@@ -264,7 +264,7 @@ export function ChatPreview({
       <div className="relative flex flex-1 flex-col items-center justify-center overflow-hidden bg-background">
         {/* Single unified loader: stays visible until iframe actually fires onLoad */}
         {!isIframeLoaded && !error && (
-          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 bg-background p-6 text-center animate-in fade-in-50 duration-300">
+          <div className="absolute inset-0 z-20 flex animate-in flex-col items-center justify-center gap-3 bg-background p-6 text-center duration-300 fade-in-50">
             <div className="flex size-12 items-center justify-center rounded-2xl border border-border/60 bg-primary/5 text-primary shadow-xs">
               <Spinner className="size-6 text-primary" />
             </div>

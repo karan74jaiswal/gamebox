@@ -4,17 +4,29 @@
 export function isAbortError(error: unknown): boolean {
   if (!error) return false
   if (error instanceof Error) {
-    if (error.name === "AbortError" || error.name === "CancellationError") return true
+    if (error.name === "AbortError" || error.name === "CancellationError")
+      return true
     const msg = error.message.toLowerCase()
-    return msg.includes("aborted") || msg.includes("abort") || msg.includes("cancel")
+    return (
+      msg.includes("aborted") || msg.includes("abort") || msg.includes("cancel")
+    )
   }
   if (typeof error === "string") {
     const lower = error.toLowerCase()
-    return lower.includes("aborted") || lower.includes("abort") || lower.includes("cancel")
+    return (
+      lower.includes("aborted") ||
+      lower.includes("abort") ||
+      lower.includes("cancel")
+    )
   }
-  if (typeof error === "object" && "message" in (error as Record<string, unknown>)) {
+  if (
+    typeof error === "object" &&
+    "message" in (error as Record<string, unknown>)
+  ) {
     const msg = String((error as Record<string, unknown>).message).toLowerCase()
-    return msg.includes("aborted") || msg.includes("abort") || msg.includes("cancel")
+    return (
+      msg.includes("aborted") || msg.includes("abort") || msg.includes("cancel")
+    )
   }
   return false
 }
@@ -38,7 +50,9 @@ export function sanitizeErrorMessage(error: unknown): string {
       ? error.message
       : typeof error === "string"
         ? error
-        : typeof error === "object" && error !== null && "message" in (error as Record<string, unknown>)
+        : typeof error === "object" &&
+            error !== null &&
+            "message" in (error as Record<string, unknown>)
           ? String((error as Record<string, unknown>).message)
           : String(error)
 

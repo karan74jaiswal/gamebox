@@ -3,7 +3,12 @@
 import * as React from "react"
 import Image from "next/image"
 import { useChat } from "@ai-sdk/react"
-import { isToolUIPart, isReasoningUIPart, getToolName, type UIMessage } from "ai"
+import {
+  isToolUIPart,
+  isReasoningUIPart,
+  getToolName,
+  type UIMessage,
+} from "ai"
 import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
 
 import type { gameChat } from "@/trigger/chat"
@@ -98,7 +103,15 @@ export function ChatThread({
     refreshedToolCallsRef.current.clear()
   }, [id])
 
-  const { messages, sendMessage, status, stop, error, clearError, setMessages } = useChat({
+  const {
+    messages,
+    sendMessage,
+    status,
+    stop,
+    error,
+    clearError,
+    setMessages,
+  } = useChat({
     id,
     messages: initialMessages,
     transport,
@@ -390,10 +403,12 @@ export function ChatThread({
                   const isLast = index === messages.length - 1
 
                   const isErrorMessage = Boolean(
-                    (message.metadata as { isError?: boolean } | undefined)?.isError
+                    (message.metadata as { isError?: boolean } | undefined)
+                      ?.isError
                   )
                   const errorText =
-                    (message.metadata as { errorText?: string } | undefined)?.errorText ||
+                    (message.metadata as { errorText?: string } | undefined)
+                      ?.errorText ||
                     "The model failed to generate a response. Please try again or select a different model."
 
                   if (isErrorMessage) {
@@ -445,7 +460,9 @@ export function ChatThread({
                     message.parts &&
                     Array.isArray(message.parts) &&
                     message.parts.some(
-                      (p) => isReasoningUIPart(p) && p.text.trim().length > 0
+                      (p) =>
+                        isReasoningUIPart(p) &&
+                        (p.text.trim().length > 0 || p.state === "streaming")
                     )
 
                   // If this is an assistant message with no text, no tool parts, and no reasoning, don't show empty bubble
@@ -491,18 +508,24 @@ export function ChatThread({
                                           partIndex === message.parts.length - 1
                                         return (
                                           <Reasoning
-                                            key={part.id || `reasoning-${partIndex}`}
+                                            key={
+                                              part.id ||
+                                              `reasoning-${partIndex}`
+                                            }
                                             part={part}
                                             isStreaming={
                                               part.state === "streaming" ||
-                                              (isGenerating && isLast && isLastPart)
+                                              (isGenerating &&
+                                                isLast &&
+                                                isLastPart)
                                             }
                                           />
                                         )
                                       }
 
                                       if (part.type === "text") {
-                                        const text = (part as { text?: string }).text
+                                        const text = (part as { text?: string })
+                                          .text
                                         if (!text || !text.trim()) return null
                                         const isLastPart =
                                           partIndex === message.parts.length - 1
@@ -511,7 +534,9 @@ export function ChatThread({
                                             key={`text-${partIndex}`}
                                             content={text}
                                             isStreaming={
-                                              isGenerating && isLast && isLastPart
+                                              isGenerating &&
+                                              isLast &&
+                                              isLastPart
                                             }
                                           />
                                         )

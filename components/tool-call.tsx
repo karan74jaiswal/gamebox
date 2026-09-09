@@ -27,7 +27,12 @@ export function getToolStatus(part: ToolPart): ToolStatus {
     return "failed"
   }
 
-  if (output && typeof output === "object" && output !== null && "error" in output) {
+  if (
+    output &&
+    typeof output === "object" &&
+    output !== null &&
+    "error" in output
+  ) {
     const err = (output as { error?: unknown }).error
     if (Boolean(err)) {
       return "failed"
