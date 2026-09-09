@@ -3,36 +3,397 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>New game</title>
+    <title>Gamebox — 3D Game Engine</title>
+    <link rel="stylesheet" href="./css/gamebox.css" />
     <style>
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
+      /* Welcome page specific refinements */
+      .gb-welcome-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        background: rgba(234, 88, 12, 0.12);
+        border: 1px solid rgba(234, 88, 12, 0.35);
+        color: #fb923c;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 0.35rem 0.85rem;
+        border-radius: 999px;
+        margin-bottom: 0.75rem;
       }
-      body {
-        background-color: #09090b;
-        color: #71717a;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+
+      .gb-welcome-badge::before {
+        content: '';
+        width: 8px;
+        height: 8px;
+        background: #ea580c;
+        border-radius: 50%;
+        box-shadow: 0 0 8px #ea580c;
+        animation: gb-pulse 1.8s infinite;
+      }
+
+      @keyframes gb-pulse {
+        0%, 100% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.35); opacity: 0.6; }
+      }
+
+      .gb-welcome-title {
+        font-size: 2.75rem;
+        font-weight: 900;
+        letter-spacing: -0.03em;
+        color: #ffffff;
+        text-shadow: 0 0 30px rgba(234, 88, 12, 0.5);
+        margin-bottom: 0.5rem;
+        line-height: 1.1;
+      }
+
+      .gb-welcome-title span {
+        color: #ea580c;
+        background: linear-gradient(135deg, #fb923c, #ea580c);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+
+      .gb-welcome-sub {
+        font-size: 1rem;
+        color: #a1a1aa;
+        max-width: 380px;
+        margin: 0 auto 1.5rem;
+        line-height: 1.5;
+      }
+
+      .gb-hint-box {
         display: flex;
         align-items: center;
-        justify-content: center;
-        height: 100vh;
-        overflow: hidden;
+        gap: 0.5rem;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 0.6rem;
+        padding: 0.5rem 0.9rem;
+        font-size: 0.8rem;
+        color: #d4d4d8;
       }
-      .container {
-        text-align: center;
-      }
-      h1 {
-        font-size: 1.5rem;
-        font-weight: 500;
-        color: #a1a1aa;
+
+      .gb-hint-box kbd {
+        background: rgba(234, 88, 12, 0.2);
+        color: #fb923c;
+        padding: 0.15rem 0.4rem;
+        border-radius: 0.3rem;
+        font-family: var(--gb-mono-font);
+        font-weight: 700;
+        border: 1px solid rgba(234, 88, 12, 0.4);
       }
     </style>
+
+    <!-- Three.js Import Map -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+      }
+    </script>
   </head>
   <body>
-    <div class="container">
-      <h1>New game</h1>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Welcome HUD Overlay -->
+    <div class="gb-hud">
+      <div class="gb-hud-header">
+        <div class="gb-stat-group">
+          <div class="gb-welcome-badge">3D Runtime Active</div>
+          <button id="gb-btn-info" class="gb-welcome-badge" style="display: none; cursor: pointer; pointer-events: auto; background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.15); color: #d4d4d8;" title="Show Welcome Info">
+            ℹ️ Info
+          </button>
+        </div>
+        <div class="gb-stat-group" style="align-items: flex-end;">
+          <button class="gb-btn-icon" id="gb-btn-sound" title="Toggle Sound">
+            <svg id="gb-icon-sound" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Center Card Modal -->
+      <div id="gb-modal-container" style="margin: auto; text-align: center; pointer-events: auto; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);">
+        <div class="gb-card" id="gb-welcome-card" style="position: relative; pointer-events: auto; backdrop-filter: blur(16px); background: rgba(18, 18, 23, 0.85); border: 1px solid rgba(234, 88, 12, 0.3); box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 40px rgba(234,88,12,0.2); transition: all 0.25s ease;">
+          <!-- Close button -->
+          <button id="gb-modal-close" class="gb-btn-icon" style="position: absolute; top: 0.85rem; right: 0.85rem; width: 2rem; height: 2rem; border-radius: 999px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); color: #a1a1aa;" title="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+
+          <h1 class="gb-welcome-title">GAME<span>BOX</span></h1>
+          <p class="gb-welcome-sub">
+            Your 3D sandbox runtime is ready. Describe any game in the chat to generate and play immediately.
+          </p>
+          <div class="gb-hint-box" style="margin-bottom: 1.25rem;">
+            <span>Interactive: Click anywhere or press <kbd>Space</kbd> to start!</span>
+          </div>
+          <button class="gb-btn-primary" id="gb-start-btn" style="width: 100%; max-width: 220px; font-size: 0.95rem; padding: 0.75rem 1.5rem; cursor: pointer;">
+            Start Game
+          </button>
+        </div>
+      </div>
+
+      <!-- Footer Info -->
+      <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; font-size: 0.75rem; color: #71717a;">
+        <span>Primitives: Engine • Controls • HUD • Sound • Models • Particles</span>
+        <span>Three.js r160 WebGL</span>
+      </div>
     </div>
+
+    <!-- 3D Welcome Scene Script -->
+    <script type="module">
+      import * as THREE from 'three';
+      import { Gamebox } from './js/gamebox.js';
+
+      // 1. Initialize Gamebox Engine
+      const { engine, sound, particles, camera, scene } = Gamebox.create({
+        cameraPos: [0, 2.5, 6.5],
+        lookAt: [0, 0, 0],
+        clearColor: 0x09090b,
+        fov: 50,
+        hud: false, // Index.html has its own dedicated welcome page HUD
+      });
+
+      // Wire up custom sound toggle button
+      const soundBtn = document.getElementById('gb-btn-sound');
+      if (soundBtn) {
+        soundBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isMuted = sound.toggleMute();
+          const soundIcon = document.getElementById('gb-icon-sound');
+          if (soundIcon) {
+            soundIcon.style.opacity = isMuted ? '0.35' : '1.0';
+          }
+        });
+      }
+
+      engine.setupLighting('studio');
+
+      // Add extra warm orange point light to illuminate the cube
+      const orangeGlowLight = new THREE.PointLight(0xea580c, 3.5, 12, 1.8);
+      orangeGlowLight.position.set(0, 0.5, 2);
+      scene.add(orangeGlowLight);
+
+      // 2. Build the Signature Gamebox 3D Cube (matching public/logo.svg)
+      // Logo specs: Rounded square in #EA580C with isometric cube faces in translucent white gradients
+      const cubeGroup = new THREE.Group();
+      scene.add(cubeGroup);
+
+      // Geometry: Rounded beveled box
+      const cubeSize = 1.8;
+      const boxGeometry = new THREE.BoxGeometry(cubeSize, cubeSize, cubeSize);
+
+      // Create materials for each face to mirror the SVG's lighting and transparency:
+      // SVG logo: Primary #EA580C orange base, with white gradient overlays on top (0.8->0.5) and right face (0.5).
+      const createFaceMaterial = (color, opacity = 1.0, roughness = 0.25, metalness = 0.3) => {
+        return new THREE.MeshStandardMaterial({
+          color: new THREE.Color(color),
+          roughness: roughness,
+          metalness: metalness,
+          transparent: opacity < 1.0,
+          opacity: opacity,
+        });
+      };
+
+      const orangePrimary = 0xea580c; // #EA580C
+      const whiteHighlight = 0xffffff;
+
+      const materials = [
+        createFaceMaterial(orangePrimary, 0.95, 0.2, 0.4), // Right (+X)
+        createFaceMaterial(orangePrimary, 0.95, 0.2, 0.4), // Left (-X)
+        createFaceMaterial(whiteHighlight, 0.9, 0.1, 0.2), // Top (+Y) - specular white facet
+        createFaceMaterial(0xc2410c, 1.0, 0.5, 0.2),       // Bottom (-Y) - deeper orange shadow
+        createFaceMaterial(orangePrimary, 0.95, 0.2, 0.4), // Front (+Z)
+        createFaceMaterial(0x9a3412, 1.0, 0.4, 0.2),       // Back (-Z)
+      ];
+
+      const mainCube = new THREE.Mesh(boxGeometry, materials);
+      mainCube.castShadow = true;
+      mainCube.receiveShadow = true;
+      cubeGroup.add(mainCube);
+
+      // Edge Highlights (Glowing wireframe edges from logo SVG inner shadows)
+      const edgesGeo = new THREE.EdgesGeometry(boxGeometry);
+      const edgesMat = new THREE.LineBasicMaterial({
+        color: 0xffffff,
+        linewidth: 2,
+        transparent: true,
+        opacity: 0.6,
+      });
+      const wireframe = new THREE.LineSegments(edgesGeo, edgesMat);
+      cubeGroup.add(wireframe);
+
+      // Floating Glow Ring below the cube
+      const ringGeo = new THREE.RingGeometry(1.2, 1.45, 48);
+      ringGeo.rotateX(-Math.PI / 2);
+      const ringMat = new THREE.MeshBasicMaterial({
+        color: 0xea580c,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.45,
+      });
+      const glowRing = new THREE.Mesh(ringGeo, ringMat);
+      glowRing.position.y = -1.6;
+      scene.add(glowRing);
+
+      // Ambient Floating Ember Particles
+      const ambientParticleCount = 40;
+      const partGeo = new THREE.BufferGeometry();
+      const partPositions = new Float32Array(ambientParticleCount * 3);
+
+      for (let i = 0; i < ambientParticleCount; i++) {
+        partPositions[i * 3] = (Math.random() - 0.5) * 8;
+        partPositions[i * 3 + 1] = (Math.random() - 0.5) * 6;
+        partPositions[i * 3 + 2] = (Math.random() - 0.5) * 6;
+      }
+      partGeo.setAttribute('position', new THREE.BufferAttribute(partPositions, 3));
+
+      const partMat = new THREE.PointsMaterial({
+        color: 0xfb923c,
+        size: 0.12,
+        transparent: true,
+        opacity: 0.65,
+        blending: THREE.AdditiveBlending,
+      });
+      const ambientParticles = new THREE.Points(partGeo, partMat);
+      scene.add(ambientParticles);
+
+      // 3. Interactive Modal Dismissal & Sound/Particle Burst
+      let spinSpeed = 1.0;
+      let targetRotX = 0.35;
+      let targetRotY = 0.75;
+      let mouseX = 0;
+      let mouseY = 0;
+
+      const triggerBurst = () => {
+        spinSpeed = 6.5; // rapid spin burst
+        sound.powerup();
+        particles.sparks(cubeGroup.position, new THREE.Vector3(0, 1, 0), { count: 25, color: 0xfb923c });
+      };
+
+      const modalContainer = document.getElementById('gb-modal-container');
+      const startBtn = document.getElementById('gb-start-btn');
+      const closeBtn = document.getElementById('gb-modal-close');
+      const infoBtn = document.getElementById('gb-btn-info');
+      let isModalOpen = true;
+
+      const closeModal = () => {
+        if (!isModalOpen) return;
+        isModalOpen = false;
+        if (modalContainer) {
+          modalContainer.style.opacity = '0';
+          modalContainer.style.transform = 'scale(0.9) translateY(24px)';
+          modalContainer.style.pointerEvents = 'none';
+          setTimeout(() => {
+            modalContainer.style.display = 'none';
+            if (infoBtn) infoBtn.style.display = 'inline-flex';
+          }, 250);
+        }
+        triggerBurst();
+      };
+
+      const openModal = () => {
+        if (isModalOpen) return;
+        isModalOpen = true;
+        if (infoBtn) infoBtn.style.display = 'none';
+        if (modalContainer) {
+          modalContainer.style.display = 'block';
+          void modalContainer.offsetHeight; // force reflow
+          modalContainer.style.opacity = '1';
+          modalContainer.style.transform = 'scale(1) translateY(0)';
+          modalContainer.style.pointerEvents = 'auto';
+        }
+      };
+
+      if (startBtn) {
+        startBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeModal();
+        });
+      }
+
+      if (closeBtn) {
+        closeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          closeModal();
+        });
+      }
+
+      if (infoBtn) {
+        infoBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          openModal();
+        });
+      }
+
+      window.addEventListener('pointermove', (e) => {
+        mouseX = (e.clientX / window.innerWidth) * 2 - 1;
+        mouseY = -(e.clientY / window.innerHeight) * 2 + 1;
+      });
+
+      // Clicking anywhere outside the welcome card dismisses the modal and triggers cube burst
+      window.addEventListener('click', (e) => {
+        const card = document.getElementById('gb-welcome-card');
+        if (isModalOpen) {
+          if (!card || !card.contains(e.target)) {
+            closeModal();
+          }
+        } else {
+          triggerBurst();
+        }
+      });
+
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space' || e.code === 'Enter') {
+          if (isModalOpen) {
+            closeModal();
+          } else {
+            triggerBurst();
+          }
+        } else if (e.code === 'Escape' && isModalOpen) {
+          closeModal();
+        }
+      });
+
+      // 4. Animation Loop
+      engine.onUpdate((dt, elapsed) => {
+        // Decay spin burst speed back to idle
+        spinSpeed += (1.0 - spinSpeed) * Math.min(1, dt * 3.5);
+
+        // Smooth continuous rotation
+        cubeGroup.rotation.y += dt * 0.75 * spinSpeed;
+        cubeGroup.rotation.x = 0.3 + Math.sin(elapsed * 1.5) * 0.1 + mouseY * 0.3;
+        cubeGroup.rotation.z = Math.cos(elapsed * 1.2) * 0.08 + mouseX * 0.2;
+
+        // Gentle floating bob
+        cubeGroup.position.y = Math.sin(elapsed * 2.2) * 0.18;
+
+        // Pulse the glow ring
+        const ringScale = 1.0 + Math.sin(elapsed * 2.5) * 0.12;
+        glowRing.scale.set(ringScale, ringScale, ringScale);
+        ringMat.opacity = 0.3 + Math.sin(elapsed * 2.5) * 0.15;
+
+        // Animate ambient floating dust particles
+        const posAttr = partGeo.attributes.position;
+        for (let i = 0; i < ambientParticleCount; i++) {
+          let y = posAttr.getY(i) + dt * 0.2;
+          if (y > 3.5) y = -3.5;
+          posAttr.setY(i, y);
+        }
+        posAttr.needsUpdate = true;
+      });
+
+      // Start engine
+      engine.start();
+    </script>
   </body>
 </html>

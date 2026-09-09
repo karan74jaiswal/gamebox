@@ -112,7 +112,18 @@ export const writeFileInputSchema = z.object({
     .describe(
       "Relative path to the file inside the game directory (e.g., 'index.html', 'js/game.js', 'css/style.css')"
     ),
-  content: z.string().describe("Complete text content to write to the file"),
+  content: z.string().describe("Initial text content to write to the file"),
+})
+
+export const updateFileInputSchema = z.object({
+  path: z
+    .string()
+    .describe(
+      "Relative path to the file inside the game directory (e.g., 'index.html', 'js/game.js', 'css/style.css')"
+    ),
+  content: z
+    .string()
+    .describe("The updated complete or revised content to write to the file"),
 })
 
 export const replaceTextInputSchema = z.object({
@@ -193,7 +204,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const write_file = tool({
     description:
-      "Write or overwrite a file inside the Daytona sandbox game directory (/home/daytona/game). Parent directories are created automatically if needed. Always use this to create or update index.html, scripts, styles, or assets.",
+      "Create a new file or initial code scaffold inside the Daytona sandbox game directory (/home/daytona/game). Parent directories are created automatically if needed. Keep initial files concise; do NOT write massive files all at once. Use update_file and replace_text for incremental expansion so progress is visible.",
     inputSchema: writeFileInputSchema,
     execute: async ({ path: filePath, content }) => {
       try {
@@ -223,6 +234,49 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           path: relativePath,
           bytes,
           message: `Successfully wrote ${relativePath} (${bytes} bytes).`,
+        }
+      } catch (error) {
+        return {
+          success: false,
+          path: filePath,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+    },
+  })
+
+  const update_file = tool({
+    description:
+      "Update an existing file inside the Daytona sandbox game directory (/home/daytona/game) with new or expanded content. Use this to iteratively build up game mechanics, add modules, or expand code step-by-step so the user sees continuous progress.",
+    inputSchema: updateFileInputSchema,
+    execute: async ({ path: filePath, content }) => {
+      try {
+        const { fullPath, relativePath } = resolveGamePath(filePath)
+        const sandbox = await resolveSandbox()
+
+        const parentDir = path.posix.dirname(fullPath)
+        const normalizedGameDir = path.posix.normalize(GAME_DIR)
+
+        if (parentDir !== normalizedGameDir) {
+          try {
+            await sandbox.fs.createFolder(parentDir, "755")
+          } catch {
+            try {
+              await sandbox.process.executeCommand(`mkdir -p "${parentDir}"`)
+            } catch {
+              // Ignore if directory already exists
+            }
+          }
+        }
+
+        await sandbox.fs.uploadFile(Buffer.from(content, "utf-8"), fullPath)
+
+        const bytes = Buffer.byteLength(content, "utf-8")
+        return {
+          success: true,
+          path: relativePath,
+          bytes,
+          message: `Successfully updated ${relativePath} (${bytes} bytes).`,
         }
       } catch (error) {
         return {
@@ -439,6 +493,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   return {
     write_file,
+    update_file,
     replace_text,
     read_file,
     list_files,
@@ -450,6 +505,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 const defaultTools = createGameTools()
 
 export const write_file = defaultTools.write_file
+export const update_file = defaultTools.update_file
 export const replace_text = defaultTools.replace_text
 export const read_file = defaultTools.read_file
 export const list_files = defaultTools.list_files
@@ -457,6 +513,7 @@ export const delete_file = defaultTools.delete_file
 
 export const tools = {
   write_file,
+  update_file,
   replace_text,
   read_file,
   list_files,

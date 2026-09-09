@@ -1,7 +1,6 @@
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import type { Sandbox } from "@daytona/sdk"
 
 export const DEFAULT_GAME_DIR = process.env.GAME_DIR || "/home/daytona/game"
 

@@ -57,6 +57,47 @@ export function ChatThread({
     initialModel || DEFAULT_MODEL_ID
   )
 
+  const hasVisibleAssistantContent = React.useCallback(
+    (message?: UIMessage) => {
+      if (!message || message.role !== "assistant") return false
+
+      const isErrorMessage = Boolean(
+        (message.metadata as { isError?: boolean } | undefined)?.isError
+      )
+      if (isErrorMessage) return true
+
+      const textParts =
+        message.parts && Array.isArray(message.parts)
+          ? message.parts.filter(
+              (p): p is { type: "text"; text: string } =>
+                p.type === "text" &&
+                typeof (p as { text?: unknown }).text === "string"
+            )
+          : []
+      const hasText = textParts.some((p) => p.text.trim().length > 0)
+
+      const hasToolParts =
+        message.parts &&
+        Array.isArray(message.parts) &&
+        message.parts.some((p) => isToolUIPart(p))
+
+      const hasReasoningParts =
+        message.parts &&
+        Array.isArray(message.parts) &&
+        message.parts.some(
+          (p) =>
+            isReasoningUIPart(p) &&
+            (p.text.trim().length > 0 || p.state === "streaming")
+        )
+
+      return hasText || hasToolParts || hasReasoningParts
+    },
+    []
+  )
+
+  const [isInitialPromptStopped, setIsInitialPromptStopped] =
+    React.useState(false)
+
   const selectedModelRef = React.useRef(selectedModel)
   React.useEffect(() => {
     selectedModelRef.current = selectedModel
@@ -75,7 +116,10 @@ export function ChatThread({
       model: selectedModel,
     },
     sessions:
-      id && initialPublicAccessToken
+      id &&
+      initialMessages &&
+      initialMessages.length > 0 &&
+      initialPublicAccessToken
         ? {
             [id]: {
               publicAccessToken: initialPublicAccessToken,
@@ -115,7 +159,7 @@ export function ChatThread({
     id,
     messages: initialMessages,
     transport,
-    resume: true,
+    resume: Boolean(initialMessages && initialMessages.length > 0),
     onFinish: () => {
       // If a code refresh was debounced, flush it promptly on turn completion
       if (refreshDebounceTimerRef.current) {
@@ -202,6 +246,7 @@ export function ChatThread({
           const name = getToolName(part)
           const isCodeModifying =
             name === "write_file" ||
+            name === "update_file" ||
             name === "replace_text" ||
             name === "delete_file"
 
@@ -244,7 +289,12 @@ export function ChatThread({
     }
   }, [])
 
+  const isSubmittingInitialPrompt = Boolean(
+    initialPrompt && messages.length === 0 && !isInitialPromptStopped
+  )
+
   const handleStop = React.useCallback(() => {
+    setIsInitialPromptStopped(true)
     if (id) {
       void transport.stopGeneration(id)
     }
@@ -376,10 +426,13 @@ export function ChatThread({
     )
   }
 
-  const isGenerating = status === "streaming" || status === "submitted"
+  const isGenerating =
+    status === "streaming" ||
+    status === "submitted" ||
+    isSubmittingInitialPrompt
 
   React.useEffect(() => {
-    if (status === "ready") {
+    if (status === "ready" && !isGenerating) {
       const spacer = document.querySelector<HTMLElement>(
         "[data-message-scroller-spacer]"
       )
@@ -389,7 +442,7 @@ export function ChatThread({
         spacer.hidden = true
       }
     }
-  }, [status])
+  }, [status, isGenerating])
 
   return (
     <div className={cn("flex size-full min-h-0 flex-col", className)}>
@@ -399,13 +452,16 @@ export function ChatThread({
             <MessageScrollerViewport>
               <MessageScrollerContent
                 spacerClassName={
-                  status === "ready" ? "!h-0 !hidden !m-0" : undefined
+                  !isGenerating && status === "ready"
+                    ? "!h-0 !hidden !m-0"
+                    : undefined
                 }
                 className="mx-auto w-full max-w-3xl gap-6 px-4 py-6"
               >
                 {messages.length === 0 &&
                   status === "ready" &&
-                  !initialPrompt && (
+                  !initialPrompt &&
+                  !isSubmittingInitialPrompt && (
                     <div className="flex h-full min-h-[300px] flex-col items-center justify-center text-center text-muted-foreground">
                       <Image
                         src="/logo.svg"
@@ -422,6 +478,25 @@ export function ChatThread({
                         want to create.
                       </p>
                     </div>
+                  )}
+
+                {messages.length === 0 &&
+                  isSubmittingInitialPrompt &&
+                  initialPrompt && (
+                    <MessageScrollerItem
+                      messageId="initial-prompt-pending"
+                      scrollAnchor
+                    >
+                      <Message align="end">
+                        <MessageContent>
+                          <Bubble variant="secondary" align="end">
+                            <BubbleContent className="text-sm leading-relaxed whitespace-pre-line">
+                              {initialPrompt}
+                            </BubbleContent>
+                          </Bubble>
+                        </MessageContent>
+                      </Message>
+                    </MessageScrollerItem>
                   )}
 
                 {messages.map((message, index) => {
@@ -477,27 +552,8 @@ export function ChatThread({
 
                   const textContent = textParts.map((p) => p.text).join("")
 
-                  const hasToolParts =
-                    message.parts &&
-                    Array.isArray(message.parts) &&
-                    message.parts.some((p) => isToolUIPart(p))
-
-                  const hasReasoningParts =
-                    message.parts &&
-                    Array.isArray(message.parts) &&
-                    message.parts.some(
-                      (p) =>
-                        isReasoningUIPart(p) &&
-                        (p.text.trim().length > 0 || p.state === "streaming")
-                    )
-
-                  // If this is an assistant message with no text, no tool parts, and no reasoning, don't show empty bubble
-                  if (
-                    !textContent.trim() &&
-                    !hasToolParts &&
-                    !hasReasoningParts &&
-                    isAssistant
-                  ) {
+                  // If this is an assistant message with no visible content yet, don't show empty bubble
+                  if (isAssistant && !hasVisibleAssistantContent(message)) {
                     return null
                   }
 
@@ -605,23 +661,20 @@ export function ChatThread({
                 {(() => {
                   const lastMessage = messages[messages.length - 1]
                   const isWaitingForFirstToken =
-                    status === "submitted" ||
-                    (status === "streaming" &&
-                      (!lastMessage ||
-                        lastMessage.role === "user" ||
-                        (lastMessage.role === "assistant" &&
-                          (!lastMessage.parts ||
-                            lastMessage.parts.length === 0 ||
-                            lastMessage.parts.every(
-                              (p) =>
-                                (p.type === "text" &&
-                                  !(p as { text?: string }).text?.trim()) ||
-                                p.type === "step-start"
-                            )))))
+                    !error &&
+                    (isSubmittingInitialPrompt ||
+                      status === "submitted" ||
+                      (status === "streaming" &&
+                        (!lastMessage ||
+                          lastMessage.role === "user" ||
+                          !hasVisibleAssistantContent(lastMessage))))
 
                   return (
                     isWaitingForFirstToken && (
-                      <MessageScrollerItem scrollAnchor>
+                      <MessageScrollerItem
+                        messageId="loading-bubbles"
+                        scrollAnchor
+                      >
                         <Message align="start">
                           <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
                             <Image
@@ -680,7 +733,7 @@ export function ChatThread({
         <ChatComposer
           placeholder="Ask a follow up or describe changes..."
           sendMessage={handleSendMessage}
-          status={status}
+          status={isSubmittingInitialPrompt ? "submitted" : status}
           onStop={handleStop}
           onCancel={handleStop}
           model={selectedModel}

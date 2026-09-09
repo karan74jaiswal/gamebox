@@ -135,6 +135,38 @@ export function formatToolDisplay(
       }
     }
 
+    case "update_file": {
+      const content = typeof input?.content === "string" ? input.content : ""
+      const lines = countLines(content)
+      const size = content ? formatFileSize(content.length) : ""
+
+      if (status === "active") {
+        return {
+          action: filePath ? "Updating" : "Updating file",
+          target: filePath,
+          suffix: content
+            ? `(${lines.toLocaleString()} lines · ${size})...`
+            : "...",
+        }
+      }
+      if (status === "done") {
+        return {
+          action: filePath ? "Updated" : "Updated file",
+          target: filePath,
+          suffix: content
+            ? `(${lines.toLocaleString()} lines · ${size})`
+            : undefined,
+        }
+      }
+      return {
+        action: filePath ? "Failed to update" : "Failed to update file",
+        target: filePath,
+        suffix: content
+          ? `(${lines.toLocaleString()} lines · ${size})`
+          : undefined,
+      }
+    }
+
     case "replace_text": {
       const newText = typeof input?.newText === "string" ? input.newText : ""
       const lines = countLines(newText)

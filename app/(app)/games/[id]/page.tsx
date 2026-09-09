@@ -33,10 +33,12 @@ export default async function GamePage({
   const initialModel = model || game.model || undefined
 
   let initialPublicAccessToken: string | undefined
-  try {
-    initialPublicAccessToken = await mintChatAccessToken(id)
-  } catch (error) {
-    console.error("Failed to mint initial chat access token:", error)
+  if (initialMessages.length > 0) {
+    try {
+      initialPublicAccessToken = await mintChatAccessToken(id)
+    } catch (error) {
+      console.error("Failed to mint initial chat access token:", error)
+    }
   }
 
   return (

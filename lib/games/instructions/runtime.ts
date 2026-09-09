@@ -1,6 +1,6 @@
 /**
  * Runtime instructions for the Gamebox AI agent.
- * Explains the Daytona sandbox environment, game directory structure, HTTP server, and iframe preview.
+ * Explains the Daytona sandbox environment, game directory structure, pre-seeded Gamebox 3D runtime primitives, HTTP server, and iframe preview.
  */
 export const runtimeInstructions = `# Daytona Runtime & Game Environment
 
@@ -17,33 +17,64 @@ You are operating within a dedicated Daytona Cloud Sandbox environment designed 
 
 ---
 
-## 2. Game Directory Structure (\`GAME_DIR\`)
+## 2. Pre-Seeded Game Directory Structure (\`GAME_DIR\`)
 
 - **Root Game Path**: \`/home/daytona/game\` (available in environment as \`GAME_DIR\`).
-- **Primary Entrypoint**: \`/home/daytona/game/index.html\`.
-- All game code, HTML, CSS, JavaScript, textures, sprites, audio, and configuration files MUST reside within \`/home/daytona/game/\`.
-- Any file created or updated in this directory is instantly available to the local HTTP server.
+- **Primary Entrypoint**: \`/home/daytona/game/index.html\` (served at \`/\`).
+- Every new sandbox is automatically seeded with a full suite of **Gamebox 3D Game Generation Primitives** directly in \`/home/daytona/game/\`:
 
-### Standard Directory Layout
 \`\`\`
 /home/daytona/game/
-├── index.html        # Main entrypoint: loads scripts, styles, and renders the canvas/UI
-├── js/               # Optional modular JavaScript/TypeScript files
-│   ├── game.js
-│   ├── player.js
-│   └── audio.js
-├── css/              # Optional stylesheets
-│   └── style.css
-└── assets/           # Optional images, sprites, textures, sound effects
+├── index.html            # Main game entrypoint
+├── css/
+│   └── gamebox.css       # Complete HUD, UI overlays, touch controls, and screen flash styles
+└── js/
+    ├── gamebox.js        # Unified entrypoint exporting all primitives & Gamebox.create()
+    ├── engine.js         # Core 3D engine, loop, camera, lighting presets, state machine
+    ├── controls.js       # WASD/Arrows, mouse, touch joystick, camera controllers, screen shake
+    ├── hud.js            # Overlay HUD, score, health bars, start/game-over/victory screens
+    ├── sound.js          # Procedural Web Audio API SFX (laser, explosion, jump, coin) & BGM
+    ├── models.js         # Procedural 3D mesh generators (characters, spaceships, cars, arenas)
+    ├── animations.js     # Springs, tweens, smooth damping, bobs/spins, character walk cycle
+    ├── particles.js      # Particle emitters (explosions, sparks, confetti, shockwaves)
+    ├── physics.js        # Arcade 3D physics, AABB/Sphere collision, ArcadeBody, SpatialGrid
+    └── shaders.js        # Custom shaders (cyber grid, hologram, energy shield, dissolve)
 \`\`\`
 
 ### Path Resolution Rules
-- Always use **relative paths** inside \`index.html\` (e.g. \`./js/game.js\`, \`./css/style.css\`, \`./assets/sprite.png\`).
+- Always use **relative paths** inside \`index.html\` (e.g. \`./css/gamebox.css\`, \`./js/gamebox.js\`).
 - The static HTTP server serves the root of \`/home/daytona/game\`. Thus, requesting \`/\` serves \`/home/daytona/game/index.html\`.
+- All pre-seeded files in \`./js/\` and \`./css/\` are available immediately without any downloads or installations!
 
 ---
 
-## 3. HTTP Server & Live Preview
+## 3. Module Loading & Import Maps
+
+Inside \`index.html\`, always include the standard Three.js import map:
+
+\`\`\`html
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+\`\`\`
+
+Then load the Gamebox toolkit via ES Module:
+\`\`\`html
+<script type="module">
+  import { Gamebox } from './js/gamebox.js';
+  // or import individual primitives:
+  // import { Engine, Controls, HUD, Sound, Models, Particles } from './js/gamebox.js';
+</script>
+\`\`\`
+
+---
+
+## 4. HTTP Server & Live Preview
 
 - **Web Server**: A Python 3 HTTP server runs continuously in the background inside the sandbox:
   \`nohup python3 -m http.server 3000 --directory /home/daytona/game > /tmp/game-server.log 2>&1 &\`
@@ -52,45 +83,25 @@ You are operating within a dedicated Daytona Cloud Sandbox environment designed 
 - **Live Preview Mechanism**:
   - Daytona generates a signed preview URL for port 3000.
   - The Gamebox client proxies this through \`/api/games/[id]/preview/live/\` directly into the live preview iframe.
-  - When you update \`/home/daytona/game/index.html\` or related files, the user can immediately refresh the preview to see the latest changes.
+  - When you update \`/home/daytona/game/index.html\` or related files via \`write_file\`, \`update_file\`, or \`replace_text\`, the preview automatically detects the change and refreshes with the latest game code.
 
 ---
 
-## 4. Iframe Constraints & Compatibility
+## 5. Iframe Constraints & How Gamebox Primitives Solve Them
 
-The game runs inside a sandboxed browser \`<iframe>\` in the user interface with permissions:
-\`sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"\`
+The game runs inside a sandboxed browser \`<iframe>\` in the user interface. Gamebox primitives automatically solve the common browser pitfalls:
 
-### Key Browser & Iframe Considerations:
 1. **Focus & Keyboard Events**:
-   - Iframe windows do not automatically capture keyboard events until clicked.
-   - Add \`window.focus()\` and attach click listeners to the canvas/body to automatically focus the game window.
-   - For all gameplay keys (\`ArrowUp\`, \`ArrowDown\`, \`ArrowLeft\`, \`ArrowRight\`, \`Space\`), call \`event.preventDefault()\` on \`keydown\` so the player does not inadvertently scroll the iframe or parent page.
+   - The \`Controls\` primitive automatically focuses the window on pointer down and intercepts all gaming keys (\`ArrowUp\`, \`ArrowDown\`, \`ArrowLeft\`, \`ArrowRight\`, \`Space\`, \`Tab\`) with \`e.preventDefault()\` so the iframe never scrolls unexpectedly.
 
 2. **Responsive Canvas Sizing**:
-   - Dynamically resize the game canvas to fit the iframe viewport:
-     \`\`\`js
-     function resize() {
-       canvas.width = window.innerWidth;
-       canvas.height = window.innerHeight;
-     }
-     window.addEventListener('resize', resize);
-     resize();
-     \`\`\`
-   - Alternatively, maintain a fixed virtual resolution (e.g., 800x600 or 1920x1080) and scale with CSS \`object-fit: contain\` or letterboxing.
+   - The \`Engine\` primitive listens to window resize events and automatically recalculates aspect ratios and renders at crisp device pixel ratios (capped at 2 for performance).
 
 3. **Audio Autoplay Policies**:
-   - Modern browsers block \`AudioContext\` autoplay until a user interaction occurs.
-   - Do not attempt to play audio on initial script execution without a user gesture.
-   - Resume or start the \`AudioContext\` on the first pointer down or keydown event:
-     \`\`\`js
-     if (audioCtx.state === 'suspended') {
-       audioCtx.resume();
-     }
-     \`\`\`
+   - The \`Sound\` primitive automatically listens for the player's first click, tap, or keypress and unlocks the Web Audio \`AudioContext\` seamlessly.
 
-4. **Persistence & Storage**:
-   - Use browser \`localStorage\` or \`sessionStorage\` for storing local high scores, saved states, or player preferences within the iframe domain.
+4. **Persistence & High Scores**:
+   - The \`HUD\` primitive automatically caches high scores in browser \`localStorage\` under a dedicated game key.
 `
 
 export const runtime = runtimeInstructions
