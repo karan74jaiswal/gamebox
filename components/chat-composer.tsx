@@ -94,7 +94,7 @@ export function ChatComposer({
 
   const handleSubmit = () => {
     const content = currentValue.trim()
-    if (!content || isPending || isStreaming) return
+    if (!content || isPending || isStreaming || disabled) return
 
     startTransition(async () => {
       try {
@@ -138,7 +138,7 @@ export function ChatComposer({
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
-              if (!isStreaming) handleSubmit()
+              if (!isStreaming && !disabled && !isPending) handleSubmit()
             } else if (e.key === "Escape" && isStreaming && handleCancel) {
               e.preventDefault()
               handleCancel()
@@ -150,7 +150,10 @@ export function ChatComposer({
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
-                <InputGroupButton variant="ghost" disabled={isStreaming}>
+                <InputGroupButton
+                  variant="ghost"
+                  disabled={isStreaming || disabled}
+                >
                   <Grip />
                   <span className="max-w-[140px] truncate">
                     {activeModel.label}

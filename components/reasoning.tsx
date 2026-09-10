@@ -25,8 +25,17 @@ export function Reasoning({ part, isStreaming }: ReasoningProps) {
   const activeStreaming = isStreaming ?? part.state === "streaming"
   const [openOverride, setOpenOverride] = React.useState<boolean | null>(null)
   const isOpen = openOverride ?? activeStreaming
+  const scrollContainerRef = React.useRef<HTMLDivElement>(null)
 
   const cleanText = part.text?.trim() || ""
+
+  React.useEffect(() => {
+    if (activeStreaming && isOpen && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop =
+        scrollContainerRef.current.scrollHeight
+    }
+  }, [cleanText, activeStreaming, isOpen])
+
   if (!cleanText && !activeStreaming) return null
 
   return (
@@ -58,7 +67,10 @@ export function Reasoning({ part, isStreaming }: ReasoningProps) {
         />
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t border-border/20 px-3 pt-1.5 pb-2.5 text-xs leading-relaxed">
-        <div className="max-h-60 overflow-y-auto font-sans select-text">
+        <div
+          ref={scrollContainerRef}
+          className="max-h-60 overflow-y-auto font-sans select-text"
+        >
           {cleanText ? (
             <Markdown
               content={cleanText}

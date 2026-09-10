@@ -352,7 +352,30 @@ export function ChatThread({
     }
   }, [initialPrompt, id, messages.length, sendMessage])
 
+  const isWaitingForPlayerAnswer = React.useMemo(() => {
+    if (messages.length === 0 || error) return false
+    const lastMessage = messages[messages.length - 1]
+    if (lastMessage.role !== "assistant" || !lastMessage.parts) return false
+
+    return lastMessage.parts.some((part) => {
+      if (!isToolUIPart(part)) return false
+      if (getToolName(part) !== "ask_player") return false
+
+      const isAnswered =
+        part.state === "output-available" ||
+        part.state === "output-error" ||
+        part.state === "output-denied" ||
+        Boolean("output" in part && part.output)
+
+      return !isAnswered
+    })
+  }, [messages, error])
+
   const handleSendMessage = (value: string, options?: { model?: string }) => {
+    if (isWaitingForPlayerAnswer) {
+      return
+    }
+
     const modelToUse = options?.model || selectedModel
     if (options?.model && options.model !== selectedModel) {
       setSelectedModel(options.model)
@@ -520,7 +543,12 @@ export function ChatThread({
 
       <div className="mx-auto w-full max-w-3xl p-4">
         <ChatComposer
-          placeholder="Ask a follow up or describe changes..."
+          placeholder={
+            isWaitingForPlayerAnswer
+              ? "Please choose an option in the questionnaire above to continue..."
+              : "Ask a follow up or describe changes..."
+          }
+          disabled={isWaitingForPlayerAnswer}
           sendMessage={handleSendMessage}
           status={isSubmittingInitialPrompt ? "submitted" : status}
           onStop={handleStop}

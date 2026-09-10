@@ -3,6 +3,7 @@
 import * as React from "react"
 import { Streamdown, type StreamdownProps } from "streamdown"
 import { cn } from "@/lib/utils"
+import { useSmoothText } from "@/hooks/use-smooth-text"
 
 export interface MarkdownProps extends Omit<StreamdownProps, "children"> {
   content: string
@@ -15,15 +16,19 @@ export function Markdown({
   className,
   isStreaming = false,
   caret,
+  animated,
   ...props
 }: MarkdownProps) {
+  const { displayedText, isTyping } = useSmoothText(content, isStreaming)
+
   return (
     <Streamdown
-      isAnimating={isStreaming}
-      caret={caret ?? (isStreaming ? "block" : undefined)}
+      isAnimating={isTyping}
+      animated={animated ?? false}
+      caret={caret ?? (isTyping ? "block" : undefined)}
       linkSafety={{ enabled: false }}
       className={cn(
-        "w-full min-w-0 text-sm leading-relaxed break-words text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        "w-full min-w-0 text-sm leading-relaxed break-words text-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0 [&>*:last-child]:after:text-primary [&>*:last-child]:after:ml-0.5",
         className
       )}
       components={{
@@ -137,7 +142,7 @@ export function Markdown({
       }}
       {...props}
     >
-      {content}
+      {displayedText}
     </Streamdown>
   )
 }
