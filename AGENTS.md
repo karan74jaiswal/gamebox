@@ -15,3 +15,10 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 This project has Trigger.dev agent skills installed in `.agents/skills/`. Before writing or changing Trigger.dev code (background tasks, scheduled tasks, realtime, or chat.agent AI agents), load the most relevant skill: `trigger-authoring-chat-agent`, `trigger-authoring-tasks`, `trigger-chat-agent-advanced`, `trigger-cost-savings`, `trigger-getting-started`, `trigger-realtime-and-frontend`.
 <!-- TRIGGER.DEV SKILLS END -->
+
+<!-- SENTRY SKILLS START -->
+## Sentry agent skills
+
+This project has Sentry agent skills installed in `.agents/skills/`. Before setting up Sentry, instrumenting monitoring/tracing, debugging issues, or configuring alerts, load the most relevant skill: `sentry-get-started`, `sentry-instrument`, `sentry-debug-issue`, `sentry-create-alert`, `sentry-setup-releases`, `sentry-fix-stack-traces`, `sentry-otel-exporter-setup`, `sentry-snapshots-cocoa`.
+<!-- SENTRY SKILLS END -->
+
