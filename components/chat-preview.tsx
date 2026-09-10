@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { useParams } from "next/navigation"
+import * as Sentry from "@sentry/nextjs"
 import {
   RotateCw,
   ExternalLink,
@@ -40,8 +41,12 @@ export function ChatPreview({
   const [isIframeLoaded, setIsIframeLoaded] = React.useState(false)
   const [isReloading, setIsReloading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+  const [gameRuntimeError, setGameRuntimeError] = React.useState<string | null>(null)
   const [iframeKey, setIframeKey] = React.useState(0)
   const iframeRef = React.useRef<HTMLIFrameElement>(null)
+
+  const hasLoggedHealthyRef = React.useRef(false)
+  const lastLoggedErrorRef = React.useRef<string | null>(null)
 
   const fetchPreviewUrl = React.useCallback(
     async (signal?: AbortSignal) => {
@@ -73,11 +78,25 @@ export function ChatPreview({
         }
 
         setPreviewUrl(data.url)
+        Sentry.logger.info(
+          Sentry.logger.fmt`Game preview URL loaded for game ${effectiveGameId}`,
+          {
+            gameId: effectiveGameId,
+            previewUrl: String(data.url),
+          }
+        )
       } catch (err: unknown) {
         if (signal?.aborted) return
         const message =
           err instanceof Error ? err.message : "Failed to load game preview."
         setError(message)
+        Sentry.logger.error(
+          Sentry.logger.fmt`Failed to load game preview: ${message}`,
+          {
+            gameId: effectiveGameId || "unknown",
+            errorMessage: message,
+          }
+        )
       }
     },
     [effectiveGameId]
@@ -101,6 +120,15 @@ export function ChatPreview({
 
   const handleReloadIframe = React.useCallback(() => {
     setIsReloading(true)
+    setGameRuntimeError(null)
+    hasLoggedHealthyRef.current = false
+    lastLoggedErrorRef.current = null
+
+    Sentry.logger.info("Reloading game preview iframe", {
+      gameId: effectiveGameId || "unknown",
+      reloadKey: iframeKey,
+    })
+
     if (reloadTimeoutRef.current) {
       clearTimeout(reloadTimeoutRef.current)
     }
@@ -125,7 +153,7 @@ export function ChatPreview({
     }
 
     setIframeKey((prev) => prev + 1)
-  }, [previewUrl, effectiveGameId, fetchPreviewUrl])
+  }, [previewUrl, effectiveGameId, fetchPreviewUrl, iframeKey])
 
   React.useEffect(() => {
     const handleCodeUpdated = (event: Event) => {
@@ -135,6 +163,9 @@ export function ChatPreview({
         !customEvent.detail?.id ||
         customEvent.detail.id === effectiveGameId
       ) {
+        Sentry.logger.info("Game code updated, triggering reload", {
+          gameId: effectiveGameId || "unknown",
+        })
         handleReloadIframe()
       }
     }
@@ -144,6 +175,76 @@ export function ChatPreview({
       window.removeEventListener("game-code-updated", handleCodeUpdated)
     }
   }, [effectiveGameId, handleReloadIframe])
+
+  // Poll iframe with game-ping when loaded
+  React.useEffect(() => {
+    if (!isIframeLoaded) return
+
+    const sendPing = () => {
+      try {
+        iframeRef.current?.contentWindow?.postMessage("game-ping", "*")
+      } catch {
+        // Ignore cross-origin error
+      }
+    }
+
+    sendPing()
+    const interval = setInterval(sendPing, 1500)
+
+    return () => {
+      clearInterval(interval)
+    }
+  }, [isIframeLoaded, iframeKey])
+
+  // Listen for game-status from iframe report.js
+  React.useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || typeof data !== "object") return
+
+      if (data.type === "game-status") {
+        if (data.error) {
+          const errObj = data.error
+          const errorMessage =
+            typeof errObj === "string"
+              ? errObj
+              : errObj?.message || String(errObj)
+          const errorName =
+            typeof errObj === "object" && errObj?.name
+              ? String(errObj.name)
+              : "Error"
+
+          setGameRuntimeError(errorMessage)
+
+          if (lastLoggedErrorRef.current !== errorMessage) {
+            lastLoggedErrorRef.current = errorMessage
+            Sentry.logger.error(
+              Sentry.logger.fmt`Game preview error: ${errorMessage}`,
+              {
+                gameId: effectiveGameId || "unknown",
+                errorName,
+                errorMessage,
+              }
+            )
+          }
+        } else {
+          setGameRuntimeError(null)
+          if (!hasLoggedHealthyRef.current) {
+            hasLoggedHealthyRef.current = true
+            Sentry.logger.info("Game preview healthy", {
+              gameId: effectiveGameId || "unknown",
+              status: "healthy",
+            })
+          }
+        }
+      }
+    }
+
+    window.addEventListener("message", handleMessage)
+    return () => {
+      window.removeEventListener("message", handleMessage)
+    }
+  }, [effectiveGameId])
 
   React.useEffect(() => {
     return () => {
@@ -188,6 +289,14 @@ export function ChatPreview({
             <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive">
               <span className="size-1.5 rounded-full bg-destructive" />
               Offline
+            </span>
+          ) : gameRuntimeError ? (
+            <span
+              className="inline-flex items-center gap-1.5 rounded-full bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive"
+              title={gameRuntimeError}
+            >
+              <span className="size-1.5 rounded-full bg-destructive" />
+              Error
             </span>
           ) : isIframeLoaded ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
@@ -323,8 +432,26 @@ export function ChatPreview({
                 }
                 setIsIframeLoaded(true)
                 setIsReloading(false)
+                Sentry.logger.info("Game preview iframe loaded", {
+                  gameId: effectiveGameId || "unknown",
+                })
               }}
             />
+            {gameRuntimeError && (
+              <div className="absolute bottom-3 inset-x-3 z-30 flex items-center justify-between rounded-lg border border-destructive/40 bg-destructive/90 px-3.5 py-2.5 text-xs text-destructive-foreground shadow-lg backdrop-blur-sm">
+                <div className="flex items-center gap-2 overflow-hidden">
+                  <AlertCircle className="size-4 shrink-0" />
+                  <span className="truncate font-mono">{gameRuntimeError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setGameRuntimeError(null)}
+                  className="ml-2 cursor-pointer text-xs font-semibold underline hover:opacity-80"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
           </div>
         ) : null}
       </div>

@@ -26,6 +26,7 @@ You are operating within a dedicated Daytona Cloud Sandbox environment designed 
 \`\`\`
 /home/daytona/game/
 ├── index.html            # Main game entrypoint
+├── report.js             # Plain script error reporter (loaded before main.js to capture syntax & runtime errors)
 ├── css/
 │   └── gamebox.css       # Complete HUD, UI overlays, touch controls, and screen flash styles
 └── js/
