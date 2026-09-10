@@ -1,14 +1,14 @@
 "use client"
 
 import * as React from "react"
-import Image from "next/image"
 import { useChat } from "@ai-sdk/react"
 import {
   isToolUIPart,
-  isReasoningUIPart,
   getToolName,
+  lastAssistantMessageIsCompleteWithToolCalls,
   type UIMessage,
 } from "ai"
+
 import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
 
 import type { gameChat } from "@/trigger/chat"
@@ -21,16 +21,41 @@ import {
   MessageScroller,
   MessageScrollerViewport,
   MessageScrollerContent,
-  MessageScrollerItem,
   MessageScrollerButton,
 } from "@/components/ui/message-scroller"
-import { Message, MessageAvatar, MessageContent } from "@/components/ui/message"
-import { Bubble, BubbleContent } from "@/components/ui/bubble"
-import { Markdown } from "@/components/ui/markdown"
 import { ChatComposer } from "@/components/chat-composer"
-import { ToolCall, getToolStatus } from "@/components/tool-call"
-import { Reasoning } from "@/components/reasoning"
+import { getToolStatus } from "@/components/tool-call"
 import { cn } from "@/lib/utils"
+
+import {
+  ChatMessageItem,
+  hasVisibleAssistantContent,
+} from "./chat-message-item"
+import {
+  ChatEmptyState,
+  ChatPendingPrompt,
+  ChatLoadingBubbles,
+  ChatErrorMessage,
+} from "./chat-thread-placeholders"
+
+export {
+  AskPlayerQuestionnaire,
+  type AskPlayerInput,
+  type AskPlayerOutput,
+  type AskPlayerQuestionnaireProps,
+  DIMENSION_CONFIG,
+} from "./ask-player-questionnaire"
+export {
+  ChatMessageItem,
+  type ChatMessageItemProps,
+  hasVisibleAssistantContent,
+} from "./chat-message-item"
+export {
+  ChatEmptyState,
+  ChatPendingPrompt,
+  ChatLoadingBubbles,
+  ChatErrorMessage,
+} from "./chat-thread-placeholders"
 
 export interface ChatThreadProps {
   id?: string
@@ -55,44 +80,6 @@ export function ChatThread({
 }: ChatThreadProps) {
   const [selectedModel, setSelectedModel] = React.useState<string>(
     initialModel || DEFAULT_MODEL_ID
-  )
-
-  const hasVisibleAssistantContent = React.useCallback(
-    (message?: UIMessage) => {
-      if (!message || message.role !== "assistant") return false
-
-      const isErrorMessage = Boolean(
-        (message.metadata as { isError?: boolean } | undefined)?.isError
-      )
-      if (isErrorMessage) return true
-
-      const textParts =
-        message.parts && Array.isArray(message.parts)
-          ? message.parts.filter(
-              (p): p is { type: "text"; text: string } =>
-                p.type === "text" &&
-                typeof (p as { text?: unknown }).text === "string"
-            )
-          : []
-      const hasText = textParts.some((p) => p.text.trim().length > 0)
-
-      const hasToolParts =
-        message.parts &&
-        Array.isArray(message.parts) &&
-        message.parts.some((p) => isToolUIPart(p))
-
-      const hasReasoningParts =
-        message.parts &&
-        Array.isArray(message.parts) &&
-        message.parts.some(
-          (p) =>
-            isReasoningUIPart(p) &&
-            (p.text.trim().length > 0 || p.state === "streaming")
-        )
-
-      return hasText || hasToolParts || hasReasoningParts
-    },
-    []
   )
 
   const [isInitialPromptStopped, setIsInitialPromptStopped] =
@@ -155,10 +142,12 @@ export function ChatThread({
     error,
     clearError,
     setMessages,
+    addToolOutput,
   } = useChat({
     id,
     messages: initialMessages,
     transport,
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     resume: Boolean(initialMessages && initialMessages.length > 0),
     onFinish: () => {
       // If a code refresh was debounced, flush it promptly on turn completion
@@ -395,7 +384,7 @@ export function ChatThread({
               isError: true,
               errorText,
             },
-            parts: [],
+            parts: lastMsg.parts || [],
           },
         ])
       }
@@ -425,6 +414,27 @@ export function ChatThread({
       }
     )
   }
+
+  const handleAnswerPlayer = React.useCallback(
+    (toolCallId: string, output: { id: string; label: string }) => {
+      const modelToUse = selectedModelRef.current
+      addToolOutput({
+        tool: "ask_player",
+        toolCallId,
+        output,
+        options: {
+          metadata: {
+            model: modelToUse,
+          },
+          body: {
+            id,
+            model: modelToUse,
+          },
+        },
+      })
+    },
+    [addToolOutput, id]
+  )
 
   const isGenerating =
     status === "streaming" ||
@@ -461,202 +471,23 @@ export function ChatThread({
                 {messages.length === 0 &&
                   status === "ready" &&
                   !initialPrompt &&
-                  !isSubmittingInitialPrompt && (
-                    <div className="flex h-full min-h-[300px] flex-col items-center justify-center text-center text-muted-foreground">
-                      <Image
-                        src="/logo.svg"
-                        alt="Gamebox"
-                        width={40}
-                        height={40}
-                        className="mb-4 opacity-50"
-                      />
-                      <p className="text-base font-medium text-foreground">
-                        What should we build for this game?
-                      </p>
-                      <p className="mt-1 max-w-sm text-sm">
-                        Describe the world, characters, rules, or mechanics you
-                        want to create.
-                      </p>
-                    </div>
-                  )}
+                  !isSubmittingInitialPrompt && <ChatEmptyState />}
 
                 {messages.length === 0 &&
                   isSubmittingInitialPrompt &&
                   initialPrompt && (
-                    <MessageScrollerItem
-                      messageId="initial-prompt-pending"
-                      scrollAnchor
-                    >
-                      <Message align="end">
-                        <MessageContent>
-                          <Bubble variant="secondary" align="end">
-                            <BubbleContent className="text-sm leading-relaxed whitespace-pre-line">
-                              {initialPrompt}
-                            </BubbleContent>
-                          </Bubble>
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
+                    <ChatPendingPrompt initialPrompt={initialPrompt} />
                   )}
 
-                {messages.map((message, index) => {
-                  const isAssistant = message.role === "assistant"
-                  const isLast = index === messages.length - 1
-
-                  const isErrorMessage = Boolean(
-                    (message.metadata as { isError?: boolean } | undefined)
-                      ?.isError
-                  )
-                  const errorText =
-                    (message.metadata as { errorText?: string } | undefined)
-                      ?.errorText ||
-                    "The model failed to generate a response. Please try again or select a different model."
-
-                  if (isErrorMessage) {
-                    return (
-                      <MessageScrollerItem
-                        key={message.id}
-                        messageId={message.id}
-                        scrollAnchor={isLast && isGenerating}
-                      >
-                        <Message align="start">
-                          <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
-                            <Image
-                              src="/logo.svg"
-                              alt="Assistant"
-                              width={32}
-                              height={32}
-                              className="size-8"
-                            />
-                          </MessageAvatar>
-                          <MessageContent className="justify-center">
-                            <Bubble variant="destructive" align="start">
-                              <BubbleContent className="text-sm">
-                                {errorText}
-                              </BubbleContent>
-                            </Bubble>
-                          </MessageContent>
-                        </Message>
-                      </MessageScrollerItem>
-                    )
-                  }
-
-                  const textParts =
-                    message.parts && Array.isArray(message.parts)
-                      ? message.parts.filter(
-                          (p): p is { type: "text"; text: string } =>
-                            p.type === "text" &&
-                            typeof (p as { text?: unknown }).text === "string"
-                        )
-                      : []
-
-                  const textContent = textParts.map((p) => p.text).join("")
-
-                  // If this is an assistant message with no visible content yet, don't show empty bubble
-                  if (isAssistant && !hasVisibleAssistantContent(message)) {
-                    return null
-                  }
-
-                  return (
-                    <MessageScrollerItem
-                      key={message.id}
-                      messageId={message.id}
-                      scrollAnchor={isLast && isGenerating}
-                    >
-                      <Message align={isAssistant ? "start" : "end"}>
-                        {isAssistant && (
-                          <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
-                            <Image
-                              src="/logo.svg"
-                              alt="Assistant"
-                              width={32}
-                              height={32}
-                              className="size-8"
-                            />
-                          </MessageAvatar>
-                        )}
-                        <MessageContent className="justify-center">
-                          <Bubble
-                            variant={isAssistant ? "ghost" : "secondary"}
-                            align={isAssistant ? "start" : "end"}
-                          >
-                            <BubbleContent className="text-sm leading-relaxed">
-                              {isAssistant ? (
-                                <div className="flex flex-col gap-2.5">
-                                  {message.parts && message.parts.length > 0 ? (
-                                    message.parts.map((part, partIndex) => {
-                                      if (isReasoningUIPart(part)) {
-                                        const isLastPart =
-                                          partIndex === message.parts.length - 1
-                                        return (
-                                          <Reasoning
-                                            key={
-                                              part.id ||
-                                              `reasoning-${partIndex}`
-                                            }
-                                            part={part}
-                                            isStreaming={
-                                              part.state === "streaming" ||
-                                              (isGenerating &&
-                                                isLast &&
-                                                isLastPart)
-                                            }
-                                          />
-                                        )
-                                      }
-
-                                      if (part.type === "text") {
-                                        const text = (part as { text?: string })
-                                          .text
-                                        if (!text || !text.trim()) return null
-                                        const isLastPart =
-                                          partIndex === message.parts.length - 1
-                                        return (
-                                          <Markdown
-                                            key={`text-${partIndex}`}
-                                            content={text}
-                                            isStreaming={
-                                              isGenerating &&
-                                              isLast &&
-                                              isLastPart
-                                            }
-                                          />
-                                        )
-                                      }
-
-                                      if (isToolUIPart(part)) {
-                                        return (
-                                          <ToolCall
-                                            key={part.toolCallId}
-                                            part={part}
-                                            isGenerating={
-                                              isGenerating && isLast
-                                            }
-                                          />
-                                        )
-                                      }
-
-                                      return null
-                                    })
-                                  ) : textContent ? (
-                                    <Markdown
-                                      content={textContent}
-                                      isStreaming={isGenerating && isLast}
-                                    />
-                                  ) : null}
-                                </div>
-                              ) : (
-                                <div className="whitespace-pre-line">
-                                  {textContent}
-                                </div>
-                              )}
-                            </BubbleContent>
-                          </Bubble>
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
-                  )
-                })}
+                {messages.map((message, index) => (
+                  <ChatMessageItem
+                    key={message.id}
+                    message={message}
+                    isLast={index === messages.length - 1}
+                    isGenerating={isGenerating}
+                    handleAnswerPlayer={handleAnswerPlayer}
+                  />
+                ))}
 
                 {(() => {
                   const lastMessage = messages[messages.length - 1]
@@ -669,59 +500,17 @@ export function ChatThread({
                           lastMessage.role === "user" ||
                           !hasVisibleAssistantContent(lastMessage))))
 
-                  return (
-                    isWaitingForFirstToken && (
-                      <MessageScrollerItem
-                        messageId="loading-bubbles"
-                        scrollAnchor
-                      >
-                        <Message align="start">
-                          <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
-                            <Image
-                              src="/logo.svg"
-                              alt="Assistant"
-                              width={32}
-                              height={32}
-                              className="size-8 animate-pulse"
-                            />
-                          </MessageAvatar>
-                          <MessageContent className="justify-center">
-                            <Bubble variant="ghost" align="start">
-                              <BubbleContent className="flex h-8 items-center gap-1.5 overflow-visible py-0 text-sm text-muted-foreground">
-                                <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80" />
-                                <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80 [animation-delay:0.2s]" />
-                                <span className="inline-block size-2 animate-bounce rounded-full bg-muted-foreground/80 [animation-delay:0.4s]" />
-                              </BubbleContent>
-                            </Bubble>
-                          </MessageContent>
-                        </Message>
-                      </MessageScrollerItem>
-                    )
-                  )
+                  return isWaitingForFirstToken ? <ChatLoadingBubbles /> : null
                 })()}
 
-                {error && (
-                  <MessageScrollerItem scrollAnchor={isGenerating}>
-                    <Message align="start">
-                      <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
-                        <Image
-                          src="/logo.svg"
-                          alt="Assistant"
-                          width={32}
-                          height={32}
-                          className="size-8"
-                        />
-                      </MessageAvatar>
-                      <MessageContent className="justify-center">
-                        <Bubble variant="destructive" align="start">
-                          <BubbleContent className="text-sm">
-                            {sanitizeErrorMessage(error.message || error)}
-                          </BubbleContent>
-                        </Bubble>
-                      </MessageContent>
-                    </Message>
-                  </MessageScrollerItem>
-                )}
+                {error &&
+                  !(
+                    messages.length > 0 &&
+                    messages[messages.length - 1]?.role === "assistant" &&
+                    (messages[messages.length - 1]?.metadata as { isError?: boolean })?.isError
+                  ) && (
+                    <ChatErrorMessage error={error} isGenerating={isGenerating} />
+                  )}
               </MessageScrollerContent>
             </MessageScrollerViewport>
             <MessageScrollerButton />

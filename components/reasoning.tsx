@@ -9,6 +9,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import { Markdown } from "@/components/ui/markdown"
 import { cn } from "@/lib/utils"
 
 export interface ReasoningProps {
@@ -57,8 +58,18 @@ export function Reasoning({ part, isStreaming }: ReasoningProps) {
         />
       </CollapsibleTrigger>
       <CollapsibleContent className="border-t border-border/20 px-3 pt-1.5 pb-2.5 text-xs leading-relaxed">
-        <div className="max-h-60 overflow-y-auto font-sans whitespace-pre-wrap text-muted-foreground/90 select-text">
-          {cleanText || (activeStreaming ? "Deliberating..." : "")}
+        <div className="max-h-60 overflow-y-auto font-sans select-text">
+          {cleanText ? (
+            <Markdown
+              content={cleanText}
+              isStreaming={activeStreaming}
+              className="text-xs text-muted-foreground/90 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:text-xs [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_code]:text-[11px] [&_pre]:my-1.5 [&_pre]:p-2"
+            />
+          ) : activeStreaming ? (
+            <span className="italic text-muted-foreground">
+              Deliberating...
+            </span>
+          ) : null}
         </div>
       </CollapsibleContent>
     </Collapsible>

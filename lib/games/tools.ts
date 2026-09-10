@@ -184,6 +184,74 @@ export const deleteFileInputSchema = z.object({
     ),
 })
 
+export const GAME_DIMENSIONS = [
+  "loop",
+  "goal",
+  "world",
+  "look",
+  "feel",
+  "challenge",
+  "controls",
+] as const
+
+export const gameDimensionEnum = z
+  .enum(GAME_DIMENSIONS)
+  .describe(
+    [
+      "The aspect of the game to clarify: ",
+      " - loop : (core gameplay mechanics, rules, and minute-to-minute interaction), ",
+      " - goal : (objectives, win/loss conditions, progression, and scoring), ",
+      " - world : (setting, theme, narrative, and atmosphere), ",
+      " - look : (visual style, color palette, camera perspective, and aesthetics), ",
+      " - feel : (game feel, physics tuning, audio/SFX/BGM, particle juice, and tactile feedback), ",
+      " - challenge : (difficulty curve, enemy AI behaviors, obstacles, hazard pacing, and fail states), or ",
+      " - controls : (input schemes, keyboard/mouse/touch mapping, responsiveness, and camera controls).",
+    ].join("\n")
+  )
+
+export type GameDimension = z.infer<typeof gameDimensionEnum>
+
+export const askPlayerOptionSchema = z.object({
+  id: z
+    .string()
+    .describe(
+      "Unique identifier for this option (e.g. 'survival-loop', 'retro-cyberpunk')"
+    ),
+  label: z
+    .string()
+    .describe("Short, human-readable label displayed on the option button"),
+  description: z
+    .string()
+    .describe("Concise explanation of what choosing this option entails"),
+})
+
+export type AskPlayerOption = z.infer<typeof askPlayerOptionSchema>
+
+export const askPlayerInputSchema = z.object({
+  dimension: gameDimensionEnum.describe(
+    "Select the game dimension first to anchor the question before writing it"
+  ),
+  question: z
+    .string()
+    .describe(
+      "The clarifying question to ask the player about this game dimension"
+    ),
+  options: z
+    .array(askPlayerOptionSchema)
+    .min(2)
+    .max(4)
+    .describe("2 to 4 distinct options for the player to choose from"),
+})
+
+export type AskPlayerInput = z.infer<typeof askPlayerInputSchema>
+
+export const askPlayerOutputSchema = z.object({
+  id: z.string().describe("The chosen option's id"),
+  label: z.string().describe("The chosen option's label"),
+})
+
+export type AskPlayerOutput = z.infer<typeof askPlayerOutputSchema>
+
 // ==========================================
 // Tool Implementations
 // ==========================================
@@ -491,6 +559,13 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     },
   })
 
+  const ask_player = tool({
+    description:
+      "Ask the player a clarifying question about a specific game dimension (loop, goal, world, look, feel, challenge, controls) with 2 to 4 options to guide game design decisions. Pauses execution until the player chooses an option in the UI.",
+    inputSchema: askPlayerInputSchema,
+    outputSchema: askPlayerOutputSchema,
+  })
+
   return {
     write_file,
     update_file,
@@ -498,6 +573,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     read_file,
     list_files,
     delete_file,
+    ask_player,
   }
 }
 
@@ -510,6 +586,7 @@ export const replace_text = defaultTools.replace_text
 export const read_file = defaultTools.read_file
 export const list_files = defaultTools.list_files
 export const delete_file = defaultTools.delete_file
+export const ask_player = defaultTools.ask_player
 
 export const tools = {
   write_file,
@@ -518,6 +595,7 @@ export const tools = {
   read_file,
   list_files,
   delete_file,
+  ask_player,
 }
 
 export const gameTools = tools

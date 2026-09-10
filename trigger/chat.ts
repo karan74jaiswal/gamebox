@@ -47,6 +47,63 @@ async function withDbRetry<T>(
   }
 }
 
+function finalizeMessageParts(
+  parts?: UIMessage["parts"],
+  fallbackError = "Tool execution was interrupted."
+): UIMessage["parts"] {
+  if (!Array.isArray(parts) || parts.length === 0) return []
+
+  return parts.map((part) => {
+    // Finalize in-flight / unfinished tool calls
+    if (typeof part === "object" && part !== null && "toolCallId" in part) {
+      const toolPart = part as {
+        state?: string
+        toolCallId: string
+        errorText?: string
+      }
+      if (
+        toolPart.state === "input-streaming" ||
+        toolPart.state === "input-available"
+      ) {
+        return {
+          ...part,
+          state: "output-error",
+          input:
+            "input" in toolPart && toolPart.input !== undefined
+              ? toolPart.input
+              : {},
+          errorText: fallbackError,
+        } as UIMessage["parts"][number]
+      }
+      return part
+    }
+
+    // Finalize streaming reasoning blocks
+    if (
+      part.type === "reasoning" &&
+      (part as { state?: string }).state === "streaming"
+    ) {
+      return {
+        ...part,
+        state: "done",
+      }
+    }
+
+    // Finalize streaming text parts
+    if (
+      part.type === "text" &&
+      (part as { state?: string }).state === "streaming"
+    ) {
+      return {
+        ...part,
+        state: "done",
+      }
+    }
+
+    return part
+  })
+}
+
 export const gameChat = chat.agent({
   id: "game-chat",
   tools,
@@ -220,9 +277,19 @@ export const gameChat = chat.agent({
     if (wasStopped) {
       // If user stopped/cancelled the turn:
       // If the assistant message has no meaningful content, remove it so only the user message remains
-      // If the assistant message has partial content, preserve it cleanly (no error banner/metadata)
-      if (lastMsg?.role === "assistant" && !hasContent) {
-        finalMessages.pop()
+      // If the assistant message has partial content, preserve it cleanly
+      if (lastMsg?.role === "assistant") {
+        if (!hasContent) {
+          finalMessages.pop()
+        } else {
+          finalMessages[lastIdx] = {
+            ...lastMsg,
+            parts: finalizeMessageParts(
+              lastMsg.parts,
+              "Generation was cancelled."
+            ),
+          }
+        }
       }
     } else if (isFailedTurn || (lastMsg?.role === "assistant" && !hasContent)) {
       const sanitizedError = sanitizeErrorMessage(
@@ -243,15 +310,27 @@ export const gameChat = chat.agent({
           parts: [],
         })
       } else if (lastMsg.role === "assistant") {
-        // Trigger.dev created an assistant stub or turn failed mid-stream
-        finalMessages[lastIdx] = {
-          ...lastMsg,
-          metadata: {
-            ...(lastMsg.metadata as object),
-            isError: true,
-            errorText: sanitizedError,
-          },
-          parts: [],
+        if (!hasContent) {
+          finalMessages[lastIdx] = {
+            ...lastMsg,
+            metadata: {
+              ...(lastMsg.metadata as object),
+              isError: true,
+              errorText: sanitizedError,
+            },
+            parts: [],
+          }
+        } else {
+          // Preserve all accumulated parts and finalize any in-flight ones
+          finalMessages[lastIdx] = {
+            ...lastMsg,
+            metadata: {
+              ...(lastMsg.metadata as object),
+              isError: true,
+              errorText: sanitizedError,
+            },
+            parts: finalizeMessageParts(lastMsg.parts, sanitizedError),
+          }
         }
       }
     }
