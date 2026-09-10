@@ -1,5 +1,7 @@
 import { defineConfig } from "@trigger.dev/sdk"
 import { additionalFiles } from "@trigger.dev/build/extensions/core"
+import { esbuildPlugin } from "@trigger.dev/build/extensions"
+import { sentryEsbuildPlugin } from "@sentry/esbuild-plugin"
 
 export default defineConfig({
   project: "proj_dgvcxasnsdrzwgnurroa",
@@ -28,6 +30,14 @@ export default defineConfig({
       additionalFiles({
         files: ["./lib/games/runtime/**"],
       }),
+      esbuildPlugin(
+        sentryEsbuildPlugin({
+          org: "personal-0e7",
+          project: "gamebox",
+          authToken: process.env.SENTRY_AUTH_TOKEN,
+        }),
+        { placement: "last", target: "deploy" }
+      ),
     ],
   },
   dirs: ["trigger"],
