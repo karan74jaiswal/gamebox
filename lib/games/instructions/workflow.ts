@@ -274,32 +274,37 @@ Evaluate the player's prompt across these 7 dimensions to identify what is undec
 
 - **Tool**: \`write_file\`
 - **Goal**: Create a lightweight, fully functional starter foundation in \`index.html\`.
-- **Implementation**:
+- **Implementation Rules**:
+  - \`write_file\` is strictly for creating **NEW files** that do not exist yet.
   - Incorporate all design choices established in Phase 1 (camera perspective, color palettes, initial lighting, audio genre).
   - Set up \`Gamebox.create()\`, the 3D scene, lighting preset, and player character mesh.
-  - Keep the initial file concise (under 150 lines) so the preview renders immediately without lag.
+  - Keep the initial scaffold concise (under 120-150 lines) so the preview renders immediately without lag.
 
 ---
 
-### Phase 3: Incremental Mechanics & Polish (\`update_file\`, \`replace_text\`)
+### Phase 3: Incremental Mechanics & Polish (\`replace_text\` & \`update_file\`)
 
-- **Tools**: \`update_file\`, \`replace_text\`, \`read_file\`, \`list_files\`, \`delete_file\`
-- **CRITICAL INCREMENTAL PROGRESS RULE (MANDATORY)**:
-  - **DO NOT attempt to write monolithic files in a single tool call!** Writing 500+ lines in one call risks truncation and stalls.
+- **Primary Tool**: \`replace_text\` (FAVOR FOR ALL MODIFICATIONS)
+- **Secondary Tool**: \`update_file\` (FOR MAJOR REFACTORING)
+- **STRICT TOOL USAGE RULES (MANDATORY)**:
+  - **FORBIDDEN**: DO NOT use \`write_file\` to modify or overwrite existing files! Generating hundreds of lines of code in \`write_file\` creates huge delays between tool calls and risks streaming timeouts.
+  - **ALWAYS FAVOR \`replace_text\`**: For adding new features, tuning numbers, adding functions, fixing bugs, or adjusting gameplay, \`replace_text\` is the fastest and most responsive tool. A surgical 10-30 line replacement generates in under 1 second.
+  - **USE \`update_file\` WHEN EXPANDING A FILE**: When adding entire systems or when changes span too much of the file for \`replace_text\`, use \`update_file\`.
+  - **MODULARIZE CODE**: Break complex games into separate scripts in \`./js/\` (e.g. \`./js/enemies.js\`, \`./js/player.js\`, \`./js/weapons.js\`, \`./js/ui.js\`) using standard ES modules (\`import\`/\`export\`). Smaller modular files generate dramatically faster than monolithic files.
   - **DO iteratively build and expand features across sequential tool calls**:
     1. **Step 1 - Environment & Arena**: Arenas, platforms, boundaries, background elements.
     2. **Step 2 - Controls & Movement**: Input listeners (\`controls.getAxes()\`), movement logic, boundary collisions, walk animations.
     3. **Step 3 - Core Mechanics & Spawning**: Enemies, collectibles, projectiles, collision checks, score updates.
     4. **Step 4 - Juice & UI**: Start screen, game over screen, floating combat text (\`hud.createEntityBar\`, \`hud.addScore\`), screen shake (\`controls.shake\`), particle explosions (\`particles.explode\`), and procedural sound effects (\`sound.laser\`, \`sound.explosion\`).
-  - Firing sequential tool calls provides continuous, real-time visual progress in the chat thread showing active construction.
+  - Firing sequential, targeted tool calls provides continuous, real-time visual progress in the chat thread showing active construction.
 
 ---
 
 ### Tool Quick Reference:
 - \`ask_player\`: Pauses generation for human-in-the-loop decision making on a specific dimension (\`loop\`, \`goal\`, \`world\`, \`look\`, \`feel\`, \`challenge\`, \`controls\`).
-- \`write_file\`: Creates a new file or initial code scaffold in \`/home/daytona/game/\`.
-- \`update_file\`: Updates existing file content with new mechanics or expanded code.
-- \`replace_text\`: Surgically replaces exact text snippets for fixes or tuning without rewriting the whole file.
+- \`replace_text\`: **HIGHEST PRIORITY for existing files**. Surgically replaces exact code snippets without rewriting whole files.
+- \`update_file\`: Updates an existing file when additions are too large for \`replace_text\`.
+- \`write_file\`: **ONLY for creating NEW files** that do not exist yet. Do not overwrite existing files with write_file.
 - \`read_file\`: Reads sandbox file contents before modifying.
 - \`list_files\`: Lists sandbox directories to inspect files.
 - \`delete_file\`: Removes obsolete files.

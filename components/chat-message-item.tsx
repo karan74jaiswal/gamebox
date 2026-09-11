@@ -9,16 +9,17 @@ import {
   type UIMessage,
 } from "ai"
 
-import { AlertCircle } from "lucide-react"
+import { AlertCircle, Loader2 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { MessageScrollerItem } from "@/components/ui/message-scroller"
 import { Message, MessageAvatar, MessageContent } from "@/components/ui/message"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Markdown } from "@/components/ui/markdown"
-import { ToolCall } from "@/components/tool-call"
+import { ToolCall, getToolStatus } from "@/components/tool-call"
 import { Reasoning } from "@/components/reasoning"
 import { AskPlayerQuestionnaire } from "@/components/ask-player-questionnaire"
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
 
 export function hasVisibleAssistantContent(message?: UIMessage) {
   if (!message || message.role !== "assistant") return false
@@ -93,6 +94,30 @@ export function ChatMessageItem({
 
   const hasParts =
     (message.parts && message.parts.length > 0) || Boolean(textContent.trim())
+
+  const isLastPartStreaming = React.useMemo(() => {
+    if (!isGenerating || !isLast || !message.parts || message.parts.length === 0) {
+      return false
+    }
+    const lastPart = message.parts[message.parts.length - 1]
+    if (isReasoningUIPart(lastPart)) {
+      return (
+        lastPart.state === "streaming" ||
+        (lastPart as { state?: string }).state === undefined
+      )
+    }
+    if (isToolUIPart(lastPart)) {
+      const toolName = getToolName(lastPart)
+      if (toolName === "ask_player") {
+        return false
+      }
+      return getToolStatus(lastPart, true) === "active"
+    }
+    if (lastPart.type === "text") {
+      return (lastPart as { state?: string }).state === "streaming"
+    }
+    return false
+  }, [isGenerating, isLast, message.parts])
 
   if (isErrorMessage && !hasParts) {
     return (
@@ -224,6 +249,19 @@ export function ChatMessageItem({
                       isStreaming={isGenerating && isLast}
                     />
                   ) : null}
+
+                  {isGenerating && isLast && !isLastPartStreaming && !isErrorMessage && (
+                    <Marker className="py-0.5 text-xs animate-pulse">
+                      <MarkerIcon>
+                        <Loader2 className="size-3.5 animate-spin text-primary" />
+                      </MarkerIcon>
+                      <MarkerContent className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          Preparing next action...
+                        </span>
+                      </MarkerContent>
+                    </Marker>
+                  )}
 
                   {isErrorMessage && (
                     <div className="mt-1 flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 px-3.5 py-2.5 text-xs text-destructive">

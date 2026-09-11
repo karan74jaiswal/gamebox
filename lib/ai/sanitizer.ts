@@ -68,10 +68,23 @@ export function sanitizeContext(
   }
 
   // 1. Leverage the official AI SDK pruneMessages function
+  // Prune only bulky filesystem tools from earlier turns, keeping human-in-the-loop (ask_player) decisions permanent
   let pruned = pruneMessages({
     messages,
     reasoning: options?.reasoning ?? "all",
-    toolCalls: options?.toolCalls ?? "before-last-message",
+    toolCalls: options?.toolCalls ?? [
+      {
+        type: "before-last-message",
+        tools: [
+          "read_file",
+          "write_file",
+          "update_file",
+          "replace_text",
+          "list_files",
+          "delete_file",
+        ],
+      },
+    ],
     emptyMessages: options?.emptyMessages ?? "remove",
   })
 

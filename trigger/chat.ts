@@ -35,12 +35,15 @@ async function withDbRetry<T>(
       attempt++
       const errMsg = err instanceof Error ? err.message : String(err)
       if (attempt >= retries) {
-        Sentry.logger.error("Database operation failed after all retries in chat", {
-          context,
-          attempt,
-          maxRetries: retries,
-          error: errMsg,
-        })
+        Sentry.logger.error(
+          "Database operation failed after all retries in chat",
+          {
+            context,
+            attempt,
+            maxRetries: retries,
+            error: errMsg,
+          }
+        )
         throw err
       }
       Sentry.logger.warn("Database operation retry in chat", {
@@ -67,11 +70,34 @@ function finalizeMessageParts(
     // Finalize in-flight / unfinished tool calls
     if (typeof part === "object" && part !== null && "toolCallId" in part) {
       const toolPart = part as {
+        type?: string
+        toolName?: string
         state?: string
         toolCallId: string
         errorText?: string
         rawError?: string
+        output?: unknown
       }
+
+      // Do not convert ask_player into output-error if it already has an answer or if waiting for answer
+      const isAskPlayer =
+        toolPart.type === "tool-ask_player" ||
+        toolPart.toolName === "ask_player" ||
+        (typeof part === "object" &&
+          "input" in part &&
+          typeof part.input === "object" &&
+          part.input !== null &&
+          "dimension" in (part.input as Record<string, unknown>))
+
+      if (isAskPlayer) {
+        if (toolPart.output !== undefined || toolPart.state === "output-available") {
+          return part
+        }
+        if (toolPart.state === "input-available") {
+          return part
+        }
+      }
+
       if (
         toolPart.state === "input-streaming" ||
         toolPart.state === "input-available"
@@ -476,7 +502,7 @@ export const gameChat = chat.agent({
           thinkingConfig: {
             includeThoughts: true,
           },
-          streamFunctionCallArguments: true,
+          // streamFunctionCallArguments: true,
         },
 
         google: {

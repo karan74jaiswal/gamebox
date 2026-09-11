@@ -273,7 +273,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const write_file = tool({
     description:
-      "Create a new file or initial code scaffold inside the Daytona sandbox game directory (/home/daytona/game). Parent directories are created automatically if needed. Keep initial files concise; do NOT write massive files all at once. Use update_file and replace_text for incremental expansion so progress is visible.",
+      "Create a brand NEW file inside the Daytona sandbox game directory (/home/daytona/game). Strictly for new files that do not exist yet. DO NOT use write_file to overwrite or modify existing files; use replace_text for surgical edits or update_file for major expansions.",
     inputSchema: writeFileInputSchema,
     execute: async ({ path: filePath, content }) => {
       try {
@@ -325,7 +325,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const update_file = tool({
     description:
-      "Update an existing file inside the Daytona sandbox game directory (/home/daytona/game) with new or expanded content. Use this to iteratively build up game mechanics, add modules, or expand code step-by-step so the user sees continuous progress.",
+      "Update an existing file inside the Daytona sandbox game directory (/home/daytona/game) with new or expanded content when changes are too large for replace_text. Use this to iteratively build up game mechanics, add modules, or expand code step-by-step.",
     inputSchema: updateFileInputSchema,
     execute: async ({ path: filePath, content }) => {
       try {
@@ -377,7 +377,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const replace_text = tool({
     description:
-      "Replace specific text or code snippets in an existing file inside the Daytona sandbox game directory. Use this for targeted edits, bug fixes, or modifying game logic without rewriting the whole file.",
+      "Surgically replace specific text or code snippets in an existing file inside the Daytona sandbox game directory. HIGHEST PRIORITY for modifying existing files, adding features, tuning values, or fixing bugs without rewriting the entire file. Generates instantly with minimal latency.",
     inputSchema: replaceTextInputSchema,
     execute: async ({
       path: filePath,
