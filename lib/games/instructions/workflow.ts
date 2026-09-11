@@ -275,21 +275,22 @@ Evaluate the player's prompt across these 7 dimensions to identify what is undec
 - **Tool**: \`write_file\`
 - **Goal**: Create a lightweight, fully functional starter foundation in \`index.html\`.
 - **Implementation Rules**:
-  - \`write_file\` is strictly for creating **NEW files** that do not exist yet.
+  - \`write_file\` is strictly for creating **NEW files** that do not exist yet. It will automatically fail if the target file already exists.
   - Incorporate all design choices established in Phase 1 (camera perspective, color palettes, initial lighting, audio genre).
   - Set up \`Gamebox.create()\`, the 3D scene, lighting preset, and player character mesh.
-  - Keep the initial scaffold concise (under 120-150 lines) so the preview renders immediately without lag.
+  - Keep the initial scaffold concise (under 150-200 lines, schema-capped at 18,000 chars / 400 lines) so the preview renders immediately without lag and avoids token quota exhaustion.
 
 ---
 
 ### Phase 3: Incremental Mechanics & Polish (\`replace_text\` & \`update_file\`)
 
-- **Primary Tool**: \`replace_text\` (FAVOR FOR ALL MODIFICATIONS)
-- **Secondary Tool**: \`update_file\` (FOR MAJOR REFACTORING)
+- **Primary Tool**: \`replace_text\` (FAVOR FOR SURGICAL SNIPPETS)
+- **Secondary Tool**: \`update_file\` (FOR TARGETED LINE RANGES & APPENDING)
 - **STRICT TOOL USAGE RULES (MANDATORY)**:
-  - **FORBIDDEN**: DO NOT use \`write_file\` to modify or overwrite existing files! Generating hundreds of lines of code in \`write_file\` creates huge delays between tool calls and risks streaming timeouts.
+  - **FORBIDDEN**: DO NOT use \`write_file\` to modify or overwrite existing files! \`write_file\` will strictly reject calls on existing files. Generating hundreds of lines of code in \`write_file\` creates huge delays and triggers token quota limits.
   - **ALWAYS FAVOR \`replace_text\`**: For adding new features, tuning numbers, adding functions, fixing bugs, or adjusting gameplay, \`replace_text\` is the fastest and most responsive tool. A surgical 10-30 line replacement generates in under 1 second.
-  - **USE \`update_file\` WHEN EXPANDING A FILE**: When adding entire systems or when changes span too much of the file for \`replace_text\`, use \`update_file\`.
+  - **USE \`update_file\` FOR TARGETED EDITS & APPENDS**: When modifying sections of an existing file, use \`update_file\` with its targeted modes (\`replace_lines\` for line range replacement, \`insert_at_line\` for insertions, \`append\` for adding to the end, or \`prepend\` for top of file). NEVER attempt to rewrite the entire file!
+  - **READ BEFORE EDITING WITH \`read_file\`**: Always check line counts with \`list_files\` first, then call \`read_file\` with targeted \`startLine\` and \`lineCount\` (strictly up to 250 lines max). Never attempt full-file blind reads.
   - **MODULARIZE CODE**: Break complex games into separate scripts in \`./js/\` (e.g. \`./js/enemies.js\`, \`./js/player.js\`, \`./js/weapons.js\`, \`./js/ui.js\`) using standard ES modules (\`import\`/\`export\`). Smaller modular files generate dramatically faster than monolithic files.
   - **DO iteratively build and expand features across sequential tool calls**:
     1. **Step 1 - Environment & Arena**: Arenas, platforms, boundaries, background elements.
@@ -303,10 +304,10 @@ Evaluate the player's prompt across these 7 dimensions to identify what is undec
 ### Tool Quick Reference:
 - \`ask_player\`: Pauses generation for human-in-the-loop decision making on a specific dimension (\`loop\`, \`goal\`, \`world\`, \`look\`, \`feel\`, \`challenge\`, \`controls\`).
 - \`replace_text\`: **HIGHEST PRIORITY for existing files**. Surgically replaces exact code snippets without rewriting whole files.
-- \`update_file\`: Updates an existing file when additions are too large for \`replace_text\`.
-- \`write_file\`: **ONLY for creating NEW files** that do not exist yet. Do not overwrite existing files with write_file.
-- \`read_file\`: Reads sandbox file contents before modifying.
-- \`list_files\`: Lists sandbox directories to inspect files.
+- \`update_file\`: Targeted modifications to existing files (\`replace_lines\`, \`insert_at_line\`, \`append\`, \`prepend\`). Strictly under 150 lines per call. Never rewrites full files.
+- \`write_file\`: **ONLY for creating NEW files** that do not exist yet (max 300-400 lines / 18,000 characters). Automatically rejects existing files.
+- \`read_file\`: Reads a targeted range of lines from sandbox files. Requires \`startLine\` and \`lineCount\` (strictly 1 to 250 lines maximum, enforced by schema). Check line count via \`list_files\` first.
+- \`list_files\`: Lists sandbox directories to inspect files, returning file sizes and line counts (\`lines\`).
 - \`delete_file\`: Removes obsolete files.
 `
 

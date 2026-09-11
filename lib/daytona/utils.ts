@@ -77,7 +77,9 @@ export async function getGameSandbox(gameId: string): Promise<Sandbox> {
     .limit(1)
 
   if (!game) {
-    Sentry.logger.error("Game not found in database for sandbox retrieval", { gameId })
+    Sentry.logger.error("Game not found in database for sandbox retrieval", {
+      gameId,
+    })
     throw new Error(`Game not found: ${gameId}`)
   }
 
@@ -128,11 +130,14 @@ export async function startGameServer(
       if (!(await serverResponds(sandbox, START_RETRIES))) {
         const log = await sandbox.process.executeCommand(`cat ${SERVER_LOG}`)
         const errorMsg = log.result.trim() || "no output"
-        Sentry.logger.error("Sandbox game server failed to start after retries", {
-          sandboxId,
-          port,
-          error: errorMsg,
-        })
+        Sentry.logger.error(
+          "Sandbox game server failed to start after retries",
+          {
+            sandboxId,
+            port,
+            error: errorMsg,
+          }
+        )
 
         throw new Error(
           `Game server failed to start in sandbox ${sandboxId}: ${errorMsg}`

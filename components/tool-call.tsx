@@ -136,13 +136,38 @@ export function formatToolDisplay(
     }
 
     case "update_file": {
+      const mode = typeof input?.mode === "string" ? input.mode : ""
       const content = typeof input?.content === "string" ? input.content : ""
       const lines = countLines(content)
       const size = content ? formatFileSize(content.length) : ""
 
+      let activeAction = "Updating"
+      let doneAction = "Updated"
+
+      if (mode === "append") {
+        activeAction = "Appending to"
+        doneAction = "Appended to"
+      } else if (mode === "prepend") {
+        activeAction = "Prepending to"
+        doneAction = "Prepended to"
+      } else if (
+        mode === "replace_lines" &&
+        typeof input?.startLine === "number" &&
+        typeof input?.endLine === "number"
+      ) {
+        activeAction = `Replacing lines ${input.startLine}–${input.endLine} of`
+        doneAction = `Replaced lines ${input.startLine}–${input.endLine} of`
+      } else if (
+        mode === "insert_at_line" &&
+        typeof input?.targetLine === "number"
+      ) {
+        activeAction = `Inserting after line ${input.targetLine} in`
+        doneAction = `Inserted after line ${input.targetLine} in`
+      }
+
       if (status === "active") {
         return {
-          action: filePath ? "Updating" : "Updating file",
+          action: filePath ? activeAction : "Updating file",
           target: filePath,
           suffix: content
             ? `(${lines.toLocaleString()} lines · ${size})...`
@@ -151,7 +176,7 @@ export function formatToolDisplay(
       }
       if (status === "done") {
         return {
-          action: filePath ? "Updated" : "Updated file",
+          action: filePath ? doneAction : "Updated file",
           target: filePath,
           suffix: content
             ? `(${lines.toLocaleString()} lines · ${size})`
@@ -168,7 +193,12 @@ export function formatToolDisplay(
     }
 
     case "replace_text": {
-      const newText = typeof input?.newText === "string" ? input.newText : ""
+      const newText =
+        typeof input?.newText === "string"
+          ? input.newText
+          : typeof input?.new_text === "string"
+            ? input.new_text
+            : ""
       const lines = countLines(newText)
 
       if (status === "active") {
@@ -194,24 +224,51 @@ export function formatToolDisplay(
     }
 
     case "read_file": {
+      const startLine =
+        typeof input?.startLine === "number" ? input.startLine : undefined
+      const lineCount =
+        typeof input?.lineCount === "number" ? input.lineCount : undefined
+      const endLine =
+        typeof input?.endLine === "number"
+          ? input.endLine
+          : startLine !== undefined && lineCount !== undefined
+            ? startLine + lineCount - 1
+            : undefined
+      const lineRange =
+        startLine !== undefined && endLine !== undefined
+          ? ` (lines ${startLine}–${endLine})`
+          : startLine !== undefined && lineCount !== undefined
+            ? ` (${lineCount} lines from ${startLine})`
+            : ""
+
       if (status === "active") {
         return {
           action: filePath ? "Reading" : "Reading file",
           target: filePath,
-          suffix: "...",
+          suffix: lineRange ? `${lineRange}...` : "...",
         }
       }
       if (status === "done") {
         let sizeInfo = ""
-        if (
-          output &&
-          typeof output === "object" &&
-          output !== null &&
-          "content" in output &&
-          typeof (output as { content?: unknown }).content === "string"
-        ) {
-          const content = (output as { content: string }).content
-          sizeInfo = ` (${countLines(content).toLocaleString()} lines)`
+        if (output && typeof output === "object" && output !== null) {
+          const typed = output as {
+            content?: unknown
+            startLine?: unknown
+            endLine?: unknown
+            totalLines?: unknown
+          }
+          if (
+            typeof typed.startLine === "number" &&
+            typeof typed.endLine === "number"
+          ) {
+            const total =
+              typeof typed.totalLines === "number"
+                ? ` of ${typed.totalLines}`
+                : ""
+            sizeInfo = ` (lines ${typed.startLine}–${typed.endLine}${total})`
+          } else if (typeof typed.content === "string") {
+            sizeInfo = ` (${countLines(typed.content).toLocaleString()} lines)`
+          }
         }
         return {
           action: filePath ? "Read" : "Read file",

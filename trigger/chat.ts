@@ -496,7 +496,7 @@ export const gameChat = chat.agent({
       abortSignal: signal,
 
       stopWhen: stepCountIs(50),
-      maxRetries: 2,
+      maxRetries: 4,
       providerOptions: {
         vertex: {
           thinkingConfig: {
