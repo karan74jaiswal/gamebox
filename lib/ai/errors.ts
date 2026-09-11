@@ -99,9 +99,15 @@ export function sanitizeErrorMessage(error: unknown): string {
     lower.includes("timed out") ||
     lower.includes("etimedout") ||
     lower.includes("econnreset") ||
-    lower.includes("deadline exceeded")
+    lower.includes("deadline exceeded") ||
+    lower.includes("premature close") ||
+    lower.includes("socket hang up") ||
+    lower.includes("connection closed") ||
+    lower.includes("stream ended") ||
+    lower.includes("stream error") ||
+    lower.includes("network error")
   ) {
-    return "The request timed out while generating a response. Please check your connection and try again."
+    return "The request was interrupted or timed out while generating a response. Please check your connection and try again."
   }
 
   // Service outages / 5xx

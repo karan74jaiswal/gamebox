@@ -3,6 +3,7 @@ import { tool } from "ai"
 import { z } from "zod"
 import { locals } from "@trigger.dev/sdk"
 import type { Sandbox } from "@daytona/sdk"
+import * as Sentry from "@sentry/node"
 import { GAME_DIR, getGameSandbox } from "@/lib/daytona/utils"
 
 /**
@@ -297,6 +298,10 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         await sandbox.fs.uploadFile(Buffer.from(content, "utf-8"), fullPath)
 
         const bytes = Buffer.byteLength(content, "utf-8")
+        Sentry.logger.info("Sandbox file written", {
+          path: relativePath,
+          bytes,
+        })
         return {
           success: true,
           path: relativePath,
@@ -304,10 +309,15 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           message: `Successfully wrote ${relativePath} (${bytes} bytes).`,
         }
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        Sentry.logger.error("Sandbox write_file failed", {
+          path: filePath,
+          error: errorMsg,
+        })
         return {
           success: false,
           path: filePath,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMsg,
         }
       }
     },
@@ -340,6 +350,10 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         await sandbox.fs.uploadFile(Buffer.from(content, "utf-8"), fullPath)
 
         const bytes = Buffer.byteLength(content, "utf-8")
+        Sentry.logger.info("Sandbox file updated", {
+          path: relativePath,
+          bytes,
+        })
         return {
           success: true,
           path: relativePath,
@@ -347,10 +361,15 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           message: `Successfully updated ${relativePath} (${bytes} bytes).`,
         }
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        Sentry.logger.error("Sandbox update_file failed", {
+          path: filePath,
+          error: errorMsg,
+        })
         return {
           success: false,
           path: filePath,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMsg,
         }
       }
     },
@@ -429,6 +448,10 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           fullPath
         )
 
+        Sentry.logger.info("Sandbox text replaced", {
+          path: relativePath,
+          occurrences: count,
+        })
         return {
           success: true,
           path: relativePath,
@@ -436,10 +459,15 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           message: `Successfully replaced ${count} occurrence(s) in ${relativePath}.`,
         }
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        Sentry.logger.error("Sandbox replace_text failed", {
+          path: filePath,
+          error: errorMsg,
+        })
         return {
           success: false,
           path: filePath,
-          error: error instanceof Error ? error.message : String(error),
+          error: errorMsg,
         }
       }
     },
@@ -544,16 +572,25 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         const sandbox = await resolveSandbox()
         await sandbox.fs.deleteFile(fullPath, recursive)
 
+        Sentry.logger.info("Sandbox file deleted", {
+          path: relativePath,
+          recursive,
+        })
         return {
           success: true,
           path: relativePath,
           message: `Successfully deleted ${relativePath}.`,
         }
       } catch (error) {
+        const errorMsg = `Failed to delete '${filePath}': ${error instanceof Error ? error.message : String(error)}`
+        Sentry.logger.error("Sandbox delete_file failed", {
+          path: filePath,
+          error: errorMsg,
+        })
         return {
           success: false,
           path: filePath,
-          error: `Failed to delete '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+          error: errorMsg,
         }
       }
     },

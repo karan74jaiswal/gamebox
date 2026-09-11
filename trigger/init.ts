@@ -8,6 +8,12 @@ Sentry.init({
   dsn: process.env.SENTRY_DSN,
   // Update this to match the environment you want to track errors for
   environment: process.env.NODE_ENV === "production" ? "production" : "development",
+  enableLogs: true,
+  integrations: [
+    Sentry.consoleLoggingIntegration({
+      levels: ["log", "warn", "error"],
+    }),
+  ],
 });
 
 // Register a global onFailure hook to capture errors

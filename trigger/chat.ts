@@ -3,6 +3,7 @@ import { chat, upsertIncomingMessage } from "@trigger.dev/sdk/ai"
 import { streamText, stepCountIs, type UIMessage } from "ai"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
+import * as Sentry from "@sentry/node"
 
 import { getLanguageModel } from "@/lib/ai/provider"
 import { sanitizeContext } from "@/lib/ai/sanitizer"
@@ -14,6 +15,7 @@ import { getGameSandbox } from "@/lib/daytona/utils"
 import { tools, setGameChatContext } from "@/lib/games/tools"
 
 const streamErrorKey = locals.create<string>("game-chat.streamError")
+const rawStreamErrorKey = locals.create<string>("game-chat.rawStreamError")
 
 /**
  * Executes a database operation with exponential backoff retry and full cause logging.
@@ -31,15 +33,22 @@ async function withDbRetry<T>(
       return await operation()
     } catch (err: unknown) {
       attempt++
-      const cause = (err as { cause?: unknown })?.cause
-      console.error(
-        `[game-chat] Database operation failed (${context}) [Attempt ${attempt}/${retries}]:`,
-        err,
-        cause ? { cause } : ""
-      )
+      const errMsg = err instanceof Error ? err.message : String(err)
       if (attempt >= retries) {
+        Sentry.logger.error("Database operation failed after all retries in chat", {
+          context,
+          attempt,
+          maxRetries: retries,
+          error: errMsg,
+        })
         throw err
       }
+      Sentry.logger.warn("Database operation retry in chat", {
+        context,
+        attempt,
+        maxRetries: retries,
+        error: errMsg,
+      })
       await new Promise((res) =>
         setTimeout(res, delayMs * Math.pow(2, attempt - 1))
       )
@@ -49,7 +58,8 @@ async function withDbRetry<T>(
 
 function finalizeMessageParts(
   parts?: UIMessage["parts"],
-  fallbackError = "Tool execution was interrupted."
+  fallbackError = "Tool execution was interrupted.",
+  rawError?: string
 ): UIMessage["parts"] {
   if (!Array.isArray(parts) || parts.length === 0) return []
 
@@ -60,6 +70,7 @@ function finalizeMessageParts(
         state?: string
         toolCallId: string
         errorText?: string
+        rawError?: string
       }
       if (
         toolPart.state === "input-streaming" ||
@@ -73,6 +84,7 @@ function finalizeMessageParts(
               ? toolPart.input
               : {},
           errorText: fallbackError,
+          ...(rawError ? { rawError } : {}),
         } as UIMessage["parts"][number]
       }
       return part
@@ -134,9 +146,12 @@ export const gameChat = chat.agent({
           "hydrateMessages:update"
         )
       } catch (err) {
-        console.error(
-          `[game-chat] Failed to persist incoming message during hydration for game ${chatId}. Continuing turn in-memory:`,
-          err
+        Sentry.logger.error(
+          "Failed to persist incoming message during hydration in chat",
+          {
+            chatId,
+            error: err instanceof Error ? err.message : String(err),
+          }
         )
       }
     }
@@ -144,6 +159,7 @@ export const gameChat = chat.agent({
     return stored
   },
   onChatStart: async ({ chatId, messages, writer }) => {
+    Sentry.logger.info("Game chat session started", { chatId })
     const sandbox = await getGameSandbox(chatId)
     setGameChatContext(chatId, sandbox)
     writer.write({
@@ -194,9 +210,12 @@ export const gameChat = chat.agent({
             })
           }
         } catch (err) {
-          console.error(
-            `[game-chat] Failed to generate or save game title for ${chatId}:`,
-            err
+          Sentry.logger.error(
+            "Failed to generate or save game title in chat session",
+            {
+              chatId,
+              error: err instanceof Error ? err.message : String(err),
+            }
           )
         }
       })
@@ -204,6 +223,7 @@ export const gameChat = chat.agent({
   },
   onTurnStart: async ({ chatId }) => {
     setGameChatContext(chatId)
+    Sentry.logger.info("Game chat turn started", { chatId })
   },
   onBeforeTurnComplete: async ({ writer, chatId, stopped, finishReason }) => {
     const streamError = locals.get(streamErrorKey)
@@ -225,11 +245,31 @@ export const gameChat = chat.agent({
     onError: (error) => {
       if (isAbortError(error) || chat.isStopped()) {
         locals.set(streamErrorKey, undefined)
+        locals.set(rawStreamErrorKey, undefined)
         return ""
       }
-      console.error("[game-chat] Model stream error:", error)
+      const rawErrorMessage =
+        error instanceof Error
+          ? error.stack || error.message
+          : typeof error === "object" && error !== null
+            ? JSON.stringify(error)
+            : String(error)
+
+      // Capture model stream errors in Sentry as tracked issues
+      Sentry.captureException(error, {
+        tags: {
+          location: "game-chat.uiMessageStreamOptions.onError",
+        },
+        extra: {
+          rawError: rawErrorMessage,
+        },
+      })
+      Sentry.logger.error("Game chat model stream error", {
+        error: rawErrorMessage,
+      })
       const message = sanitizeErrorMessage(error)
       locals.set(streamErrorKey, message)
+      locals.set(rawStreamErrorKey, rawErrorMessage)
       return message
     },
   },
@@ -245,7 +285,9 @@ export const gameChat = chat.agent({
   }) => {
     const finalMessages = [...uiMessages]
     const streamError = locals.get(streamErrorKey)
+    const rawStreamError = locals.get(rawStreamErrorKey)
     locals.set(streamErrorKey, undefined)
+    locals.set(rawStreamErrorKey, undefined)
 
     const wasStopped =
       Boolean(stopped) || chat.isStopped() || isAbortError(error)
@@ -253,6 +295,34 @@ export const gameChat = chat.agent({
     const isFailedTurn =
       !wasStopped &&
       (Boolean(error) || Boolean(streamError) || finishReason === "error")
+
+    // If turn failed and error was not already captured by onError, capture it in Sentry now
+    if (isFailedTurn && !rawStreamError) {
+      const turnErr =
+        error instanceof Error
+          ? error
+          : new Error(
+              typeof error === "string"
+                ? error
+                : `Chat turn failed (finishReason: ${finishReason || "unknown"})`
+            )
+      Sentry.captureException(turnErr, {
+        tags: {
+          location: "game-chat.onTurnComplete",
+          finishReason: finishReason ?? "unknown",
+        },
+        extra: {
+          chatId,
+          model: clientData?.model,
+          rawError: error instanceof Error ? error.message : String(error),
+        },
+      })
+      Sentry.logger.error("Game chat turn completed with error", {
+        chatId,
+        finishReason: finishReason ?? "unknown",
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
 
     const lastIdx = finalMessages.length - 1
     const lastMsg = lastIdx >= 0 ? finalMessages[lastIdx] : undefined
@@ -297,6 +367,15 @@ export const gameChat = chat.agent({
           streamError ||
           "The model failed to generate a response. Please select a different model."
       )
+      const rawErrorDetail =
+        rawStreamError ||
+        (error instanceof Error
+          ? error.message
+          : error
+            ? String(error)
+            : finishReason === "error"
+              ? "Stream ended with finishReason: error"
+              : undefined)
 
       if (!lastMsg || lastMsg.role === "user") {
         // No assistant message was generated at all -> append new assistant message with error metadata
@@ -306,6 +385,7 @@ export const gameChat = chat.agent({
           metadata: {
             isError: true,
             errorText: sanitizedError,
+            ...(rawErrorDetail ? { rawError: rawErrorDetail } : {}),
           },
           parts: [],
         })
@@ -317,6 +397,7 @@ export const gameChat = chat.agent({
               ...(lastMsg.metadata as object),
               isError: true,
               errorText: sanitizedError,
+              ...(rawErrorDetail ? { rawError: rawErrorDetail } : {}),
             },
             parts: [],
           }
@@ -328,8 +409,13 @@ export const gameChat = chat.agent({
               ...(lastMsg.metadata as object),
               isError: true,
               errorText: sanitizedError,
+              ...(rawErrorDetail ? { rawError: rawErrorDetail } : {}),
             },
-            parts: finalizeMessageParts(lastMsg.parts, sanitizedError),
+            parts: finalizeMessageParts(
+              lastMsg.parts,
+              sanitizedError,
+              rawErrorDetail
+            ),
           }
         }
       }
@@ -350,9 +436,25 @@ export const gameChat = chat.agent({
     )
 
     chat.history.set(finalMessages)
+
+    Sentry.logger.info("Game chat turn completed", {
+      chatId,
+      finishReason: finishReason || "unknown",
+      wasStopped,
+      isFailedTurn,
+      messageCount: finalMessages.length,
+    })
   },
   run: async ({ messages, tools, signal, clientData, chatId }) => {
     setGameChatContext(chatId)
+
+    Sentry.logger.info("Game chat model stream initiated", {
+      chatId,
+      messageCount: messages.length,
+      model: clientData?.model || "default",
+      provider: clientData?.provider || "default",
+    })
+
     const selectedModel = getLanguageModel(
       clientData?.provider,
       clientData?.model

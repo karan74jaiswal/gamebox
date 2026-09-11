@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation"
 import { auth } from "@clerk/nextjs/server"
 import type { UIMessage } from "ai"
+import * as Sentry from "@sentry/nextjs"
 
 import { GameChat } from "@/components/game-chat"
 import { getGame } from "@/lib/games/queries"
@@ -37,9 +38,18 @@ export default async function GamePage({
     try {
       initialPublicAccessToken = await mintChatAccessToken(id)
     } catch (error) {
-      console.error("Failed to mint initial chat access token:", error)
+      Sentry.logger.error("Failed to mint initial chat access token", {
+        gameId: id,
+        error: error instanceof Error ? error.message : String(error),
+      })
     }
   }
+
+  Sentry.logger.info("Game page loaded", {
+    gameId: id,
+    hasSandbox: Boolean(game.sandboxId),
+    messageCount: initialMessages.length,
+  })
 
   return (
     <div className="flex h-svh flex-col overflow-hidden">

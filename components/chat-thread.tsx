@@ -15,6 +15,7 @@ import type { gameChat } from "@/trigger/chat"
 import { mintChatAccessToken, startChatSession } from "@/app/actions"
 import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
 import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
+import * as Sentry from "@sentry/nextjs"
 
 import {
   MessageScrollerProvider,
@@ -149,7 +150,16 @@ export function ChatThread({
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     resume: Boolean(initialMessages && initialMessages.length > 0),
+    onError: (err) => {
+      Sentry.logger.error("Client chat turn error", {
+        chatId: id || "unknown",
+        error: err.message,
+      })
+    },
     onFinish: () => {
+      Sentry.logger.info("Client chat turn finished", {
+        chatId: id || "unknown",
+      })
       // If a code refresh was debounced, flush it promptly on turn completion
       if (refreshDebounceTimerRef.current) {
         clearTimeout(refreshDebounceTimerRef.current)

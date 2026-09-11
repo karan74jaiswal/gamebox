@@ -9,4 +9,10 @@ Sentry.init({
   includeLocalVariables: true,
 
   enableLogs: true,
+
+  integrations: [
+    Sentry.consoleLoggingIntegration({
+      levels: ["log", "warn", "error"],
+    }),
+  ],
 });

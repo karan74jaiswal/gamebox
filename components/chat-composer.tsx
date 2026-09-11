@@ -3,6 +3,7 @@
 import * as React from "react"
 import { useRouter } from "next/navigation"
 import { Grip, ChevronDown, ArrowUp, Square } from "lucide-react"
+import * as Sentry from "@sentry/nextjs"
 
 import {
   InputGroup,
@@ -118,9 +119,12 @@ export function ChatComposer({
         onInputChange?.("")
         onChange?.("")
       } catch (error) {
-        console.error(
-          sendMessage ? "Failed to send message:" : "Failed to create game:",
-          error
+        Sentry.logger.error(
+          sendMessage ? "Failed to send message" : "Failed to create game",
+          {
+            operation: sendMessage ? "sendMessage" : "createGame",
+            error: error instanceof Error ? error.message : String(error),
+          }
         )
       }
     })

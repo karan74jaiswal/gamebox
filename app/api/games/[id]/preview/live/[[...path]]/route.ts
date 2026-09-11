@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server"
+import * as Sentry from "@sentry/nextjs"
 import {
   PREVIEW_PORT,
   PREVIEW_URL_TTL_SECONDS,
@@ -53,6 +54,7 @@ export async function GET(
 
   const game = await getGame(id)
   if (!game || !game.sandboxId) {
+    Sentry.logger.warn("Live preview proxy game sandbox not found", { gameId: id })
     return new Response("Game sandbox not found", { status: 404 })
   }
 
@@ -103,6 +105,11 @@ export async function GET(
 
   // Retry once if sandbox restarted or token expired
   if (response.status === 502 || response.status === 400) {
+    Sentry.logger.warn("Live preview proxy upstream retry on error status", {
+      gameId: id,
+      sandboxId: game.sandboxId,
+      upstreamStatus: response.status,
+    })
     previewUrlCache.delete(game.sandboxId)
     const sandbox = await startGameServer(game.sandboxId)
     const { url } = await sandbox.getSignedPreviewUrl(

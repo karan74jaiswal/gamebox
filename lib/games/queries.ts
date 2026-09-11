@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server"
 import { and, desc, eq } from "drizzle-orm"
+import * as Sentry from "@sentry/nextjs"
 
 import { db, games, type Game } from "@/lib/db"
 
@@ -15,13 +16,22 @@ export async function getGame(id: string): Promise<Game | null> {
     return null
   }
 
-  const [game] = await db
-    .select()
-    .from(games)
-    .where(and(eq(games.id, id), eq(games.orgId, orgId)))
-    .limit(1)
+  try {
+    const [game] = await db
+      .select()
+      .from(games)
+      .where(and(eq(games.id, id), eq(games.orgId, orgId)))
+      .limit(1)
 
-  return game ?? null
+    return game ?? null
+  } catch (error) {
+    Sentry.logger.error("Database query failed in getGame", {
+      gameId: id,
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  }
 }
 
 export type SidebarGame = Pick<Game, "id" | "title">
@@ -33,12 +43,20 @@ export async function listGames(): Promise<SidebarGame[]> {
     return []
   }
 
-  return await db
-    .select({
-      id: games.id,
-      title: games.title,
+  try {
+    return await db
+      .select({
+        id: games.id,
+        title: games.title,
+      })
+      .from(games)
+      .where(eq(games.orgId, orgId))
+      .orderBy(desc(games.createdAt))
+  } catch (error) {
+    Sentry.logger.error("Database query failed in listGames", {
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
     })
-    .from(games)
-    .where(eq(games.orgId, orgId))
-    .orderBy(desc(games.createdAt))
+    throw error
+  }
 }

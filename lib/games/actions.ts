@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 import { and, eq } from "drizzle-orm"
 import { generateId, type UIMessage } from "ai"
+import * as Sentry from "@sentry/nextjs"
 
 import { db, games, type Game } from "@/lib/db"
 
@@ -37,26 +38,52 @@ export async function createGame(input: CreateGameInput): Promise<Game> {
 
   const { orgId } = await auth()
   if (!orgId) {
+    Sentry.logger.warn("Unauthorized game creation attempt without orgId")
     throw new Error("Unauthorized: Organization ID is required")
   }
 
-  // 1. Insert immediately with a quick initial title so client navigates in ~10ms
-  const initialTitle =
-    promptText.length > 30 ? `${promptText.slice(0, 27)}...` : promptText
+  Sentry.getIsolationScope().setAttributes({
+    action: "createGame",
+    orgId,
+  })
 
-  const [newGame] = await db
-    .insert(games)
-    .values({
-      title: initialTitle,
+  Sentry.logger.info("Creating new game", {
+    orgId,
+    model: modelChoice || DEFAULT_MODEL_ID,
+  })
+
+  try {
+    // 1. Insert immediately with a quick initial title so client navigates in ~10ms
+    const initialTitle =
+      promptText.length > 30 ? `${promptText.slice(0, 27)}...` : promptText
+
+    const [newGame] = await db
+      .insert(games)
+      .values({
+        title: initialTitle,
+        orgId,
+        model: modelChoice || DEFAULT_MODEL_ID,
+      })
+      .returning()
+
+    // Refresh app/(app)/layout.tsx server component layout tag
+    revalidatePath("/", "layout")
+
+    Sentry.logger.info("Game created successfully", {
+      gameId: newGame.id,
       orgId,
-      model: modelChoice || DEFAULT_MODEL_ID,
+      title: newGame.title,
+      model: newGame.model || DEFAULT_MODEL_ID,
     })
-    .returning()
 
-  // Refresh app/(app)/layout.tsx server component layout tag
-  revalidatePath("/", "layout")
-
-  return newGame
+    return newGame
+  } catch (error) {
+    Sentry.logger.error("Failed to create game in database", {
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  }
 }
 
 export async function saveGameMessages(
@@ -70,15 +97,29 @@ export async function saveGameMessages(
     m.id && m.id.trim() !== "" ? m : { ...m, id: generateId() }
   )
 
-  await db
-    .update(games)
-    .set({
-      messages: sanitizedMessages,
-      updatedAt: new Date(),
+  Sentry.logger.info("Saving game messages", {
+    gameId,
+    messageCount: sanitizedMessages.length,
+  })
+
+  try {
+    await db
+      .update(games)
+      .set({
+        messages: sanitizedMessages,
+        updatedAt: new Date(),
+      })
+      .where(
+        effectiveOrgId
+          ? and(eq(games.id, gameId), eq(games.orgId, effectiveOrgId))
+          : eq(games.id, gameId)
+      )
+  } catch (error) {
+    Sentry.logger.error("Failed to save game messages in database", {
+      gameId,
+      messageCount: sanitizedMessages.length,
+      error: error instanceof Error ? error.message : String(error),
     })
-    .where(
-      effectiveOrgId
-        ? and(eq(games.id, gameId), eq(games.orgId, effectiveOrgId))
-        : eq(games.id, gameId)
-    )
+    throw error
+  }
 }

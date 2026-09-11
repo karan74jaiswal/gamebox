@@ -10,6 +10,10 @@ export default function GlobalError({
   error: Error & { digest?: string };
 }) {
   useEffect(() => {
+    Sentry.logger.error("Global client error caught", {
+      digest: error.digest || "none",
+      error: error.message,
+    });
     Sentry.captureException(error);
   }, [error]);
 

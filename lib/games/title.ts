@@ -1,4 +1,5 @@
 import { generateText } from "ai"
+import * as Sentry from "@sentry/nextjs"
 
 import { getLanguageModel } from "@/lib/ai/provider"
 
@@ -27,9 +28,19 @@ export async function generateGameTitle(
       .replace(/[.]+$/, "")
       .trim()
 
+    if (title) {
+      Sentry.logger.info("Background game title generated", {
+        title,
+        promptLength: cleanPrompt.length,
+      })
+    }
+
     return title || null
   } catch (error) {
-    console.error("Background game title generation failed:", error)
+    Sentry.logger.error("Background game title generation failed", {
+      promptLength: cleanPrompt.length,
+      error: error instanceof Error ? error.message : String(error),
+    })
     return null
   }
 }
