@@ -1,11 +1,23 @@
 import { auth } from "@clerk/nextjs/server"
 import { PricingTable } from "@clerk/nextjs"
 
+import { reconcile } from "@/lib/credits/reconcile"
+import { getFormattedOrgBalance } from "@/lib/credits/ledger"
+import { BillingCreditsSync } from "@/components/billing-credits-sync"
+
 export default async function BillingPage() {
-  await auth.protect({ unauthenticatedUrl: "/sign-in" })
+  const { orgId } = await auth.protect({ unauthenticatedUrl: "/sign-in" })
+
+  if (orgId) {
+    await reconcile(orgId)
+  }
+
+  const formattedCredits = orgId ? await getFormattedOrgBalance(orgId) : "$1.00"
 
   return (
     <div className="flex min-h-svh flex-col">
+      <BillingCreditsSync credits={formattedCredits} />
+
       {/* Top Header */}
       <header className="flex h-12 shrink-0 items-center border-b border-border/40 px-6">
         <span className="text-sm font-medium text-foreground">Billing</span>
@@ -18,12 +30,12 @@ export default async function BillingPage() {
           <div>
             <p className="text-sm text-muted-foreground">Available credits</p>
             <h1 className="mt-2 text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
-              $8.80
+              {formattedCredits}
             </h1>
             <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground">
               Credits cover the models that build and revise your games. A scene
-              already in progress can finish below zero; the next build waits for
-              more credits.
+              already in progress can finish below zero; the next build waits
+              for more credits.
             </p>
           </div>
 
@@ -38,7 +50,10 @@ export default async function BillingPage() {
               </p>
             </div>
 
-            <PricingTable for="organization" />
+            <PricingTable
+              for="organization"
+              newSubscriptionRedirectUrl="/billing"
+            />
           </div>
         </div>
       </div>

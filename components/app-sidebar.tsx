@@ -43,6 +43,37 @@ export type { SidebarGame }
 export interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   games?: SidebarGame[]
   gamesPromise?: Promise<SidebarGame[]>
+  credits?: string
+  creditsPromise?: Promise<string>
+}
+
+function SidebarCreditsBadge({
+  creditsPromise,
+  initialCredits = "$1.00",
+}: {
+  creditsPromise?: Promise<string>
+  initialCredits?: string
+}) {
+  const resolved = creditsPromise ? React.use(creditsPromise) : initialCredits
+  const [creditOverride, setCreditOverride] = React.useState<string | null>(
+    null
+  )
+
+  React.useEffect(() => {
+    const handleCreditsUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ credits?: string }>
+      if (customEvent.detail?.credits) {
+        setCreditOverride(customEvent.detail.credits)
+      }
+    }
+
+    window.addEventListener("credits-updated", handleCreditsUpdate)
+    return () => {
+      window.removeEventListener("credits-updated", handleCreditsUpdate)
+    }
+  }, [])
+
+  return <SidebarMenuBadge>{creditOverride ?? resolved}</SidebarMenuBadge>
 }
 
 export function SidebarRecentsSkeleton() {
@@ -193,7 +224,13 @@ function SidebarRecentsList({
   )
 }
 
-export function AppSidebar({ games, gamesPromise, ...props }: AppSidebarProps) {
+export function AppSidebar({
+  games,
+  gamesPromise,
+  credits,
+  creditsPromise,
+  ...props
+}: AppSidebarProps) {
   const pathname = usePathname()
 
   return (
@@ -258,7 +295,14 @@ export function AppSidebar({ games, gamesPromise, ...props }: AppSidebarProps) {
               <Coins />
               <span>Credits</span>
             </SidebarMenuButton>
-            <SidebarMenuBadge>$1.00</SidebarMenuBadge>
+            <React.Suspense
+              fallback={<SidebarMenuBadge>$1.00</SidebarMenuBadge>}
+            >
+              <SidebarCreditsBadge
+                creditsPromise={creditsPromise}
+                initialCredits={credits}
+              />
+            </React.Suspense>
           </SidebarMenuItem>
         </SidebarMenu>
         <div className="flex min-w-0 items-center justify-between gap-2 px-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
