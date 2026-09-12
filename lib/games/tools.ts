@@ -131,10 +131,10 @@ export const updateFileInputSchema = z.object({
     .enum(["replace_lines", "insert_at_line", "append", "prepend"])
     .describe(
       "The targeted update action to perform:\n" +
-      "- 'replace_lines': Replaces an exact range of lines (from startLine to endLine) with new content.\n" +
-      "- 'insert_at_line': Inserts new content immediately after targetLine.\n" +
-      "- 'append': Appends new content to the very end of the file.\n" +
-      "- 'prepend': Inserts new content at the very beginning (line 1) of the file."
+        "- 'replace_lines': Replaces an exact range of lines (from startLine to endLine) with new content.\n" +
+        "- 'insert_at_line': Inserts new content immediately after targetLine.\n" +
+        "- 'append': Appends new content to the very end of the file.\n" +
+        "- 'prepend': Inserts new content at the very beginning (line 1) of the file."
     ),
   content: z
     .string()
@@ -181,11 +181,7 @@ export const replaceTextInputSchema = z.object({
     .describe(
       "The exact existing text or code snippet in the file to replace (strictly under 100 lines / 8,000 characters). Must match the file content exactly, including whitespace."
     ),
-  old_text: z
-    .string()
-    .max(8000)
-    .optional()
-    .describe("Alias for oldText"),
+  old_text: z.string().max(8000).optional().describe("Alias for oldText"),
   newText: z
     .string()
     .max(8000)
@@ -193,11 +189,7 @@ export const replaceTextInputSchema = z.object({
     .describe(
       "The replacement text to insert (strictly under 100 lines / 8,000 characters)."
     ),
-  new_text: z
-    .string()
-    .max(8000)
-    .optional()
-    .describe("Alias for newText"),
+  new_text: z.string().max(8000).optional().describe("Alias for newText"),
   replaceAll: z
     .boolean()
     .optional()
@@ -217,9 +209,7 @@ export const readFileInputSchema = z.object({
     .int()
     .min(1)
     .default(1)
-    .describe(
-      "The starting line number to read (1-indexed). Defaults to 1."
-    ),
+    .describe("The starting line number to read (1-indexed). Defaults to 1."),
   lineCount: z
     .number()
     .int()
@@ -356,31 +346,12 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const write_file = tool({
     description:
-      "Create a brand NEW file inside the Daytona sandbox game directory (/home/daytona/game). Strictly for new files that do not exist yet. Will return an error if the file already exists (use replace_text for surgical edits or update_file for major expansions).",
+      "Create or overwrite a file inside the Daytona sandbox game directory (/home/daytona/game). Keep files concise (under 300 lines) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly. For targeted edits under 100 lines, prefer replace_text.",
     inputSchema: writeFileInputSchema,
     execute: async ({ path: filePath, content }) => {
       try {
         const { fullPath, relativePath } = resolveGamePath(filePath)
         const sandbox = await resolveSandbox()
-
-        // Guard against overwriting existing files
-        let fileExists = false
-        try {
-          const details = await sandbox.fs.getFileDetails(fullPath)
-          if (details) {
-            fileExists = true
-          }
-        } catch {
-          // File does not exist, which is expected for write_file
-        }
-
-        if (fileExists) {
-          return {
-            success: false,
-            path: relativePath,
-            error: `File '${relativePath}' already exists. 'write_file' is strictly for creating NEW files. To modify this existing file, use 'replace_text' for surgical edits or 'update_file' for full rewrites.`,
-          }
-        }
 
         const lines = content.length === 0 ? 0 : content.split(/\r?\n/).length
         if (lines > 400) {
@@ -724,7 +695,8 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         const buffer = await sandbox.fs.downloadFile(fullPath)
         const rawContent = buffer.toString("utf-8")
 
-        const allLines = rawContent.length === 0 ? [] : rawContent.split(/\r?\n/)
+        const allLines =
+          rawContent.length === 0 ? [] : rawContent.split(/\r?\n/)
         const totalLines = allLines.length
 
         if (totalLines === 0) {
@@ -763,7 +735,10 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
         // Enforce hard maximum ceiling of 500 lines
         const effectiveCount = Math.min(Math.max(1, count), 500)
-        const effectiveEnd = Math.min(effectiveStart + effectiveCount - 1, totalLines)
+        const effectiveEnd = Math.min(
+          effectiveStart + effectiveCount - 1,
+          totalLines
+        )
 
         const selectedLines = allLines.slice(effectiveStart - 1, effectiveEnd)
         const content = selectedLines.join("\n")
@@ -780,7 +755,9 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           totalLines,
           linesRead: selectedLines.length,
           truncated,
-          ...(truncated ? { remainingLines, nextStartLine: effectiveEnd + 1 } : {}),
+          ...(truncated
+            ? { remainingLines, nextStartLine: effectiveEnd + 1 }
+            : {}),
           content,
         }
       } catch (error) {
@@ -812,7 +789,12 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
             try {
               // Execute wc -l on non-hidden files directly in sandbox
               const cmd = `find "${fullPath}" -maxdepth ${depth} -type f ! -path '*/.*' -exec wc -l {} +`
-              const res = await sandbox.process.executeCommand(cmd, undefined, undefined, 5)
+              const res = await sandbox.process.executeCommand(
+                cmd,
+                undefined,
+                undefined,
+                5
+              )
               const stdout = res.result || ""
               const map = new Map<string, number>()
               for (const line of stdout.split("\n")) {

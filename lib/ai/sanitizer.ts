@@ -175,3 +175,103 @@ function pruneString(text: string, tokens: Array<string | RegExp>): string {
   }
   return cleaned
 }
+
+export interface StepUnit {
+  assistantMsg: ModelMessage
+  toolMessages: ModelMessage[]
+  hasAskPlayer: boolean
+}
+
+/**
+ * Groups messages into prefix history and atomic Step Units (Assistant Tool Call + Tool Result Responses).
+ * Identifies the start of the current turn using the last user message.
+ */
+export function groupMessagesIntoSteps(messages: ModelMessage[]): {
+  prefixMessages: ModelMessage[]
+  steps: StepUnit[]
+} {
+  let lastUserIdx = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "user") {
+      lastUserIdx = i
+      break
+    }
+  }
+
+  const prefixMessages = messages.slice(0, lastUserIdx + 1)
+  const turnMessages = messages.slice(lastUserIdx + 1)
+
+  const steps: StepUnit[] = []
+  let i = 0
+  while (i < turnMessages.length) {
+    const msg = turnMessages[i]
+    if (msg.role === "assistant") {
+      const assistantMsg = msg
+      const toolMessages: ModelMessage[] = []
+      i++
+      while (i < turnMessages.length && turnMessages[i].role === "tool") {
+        toolMessages.push(turnMessages[i])
+        i++
+      }
+
+      const content = Array.isArray(assistantMsg.content)
+        ? assistantMsg.content
+        : []
+      const hasAskPlayer = content.some(
+        (part) => part.type === "tool-call" && part.toolName === "ask_player"
+      )
+
+      steps.push({ assistantMsg, toolMessages, hasAskPlayer })
+    } else {
+      prefixMessages.push(msg)
+      i++
+    }
+  }
+
+  return { prefixMessages, steps }
+}
+
+export interface SanitizeStepOptions {
+  /**
+   * Number of recent steps to keep completely intact in the sliding window.
+   * Default: 20 steps (~40 messages)
+   */
+  windowSteps?: number
+}
+
+/**
+ * Atomic sliding-window step sanitizer for `streamText`'s `prepareStep`.
+ * Evicts entire older step pairs (assistant thought + tool call + tool response)
+ * when history exceeds windowSteps, preserving Gemini thoughtSignature integrity
+ * and capping input tokens to prevent Vertex AI 429 TPM exhaustion.
+ */
+export function sanitizeStep(
+  messages: ModelMessage[],
+  options?: SanitizeStepOptions
+): ModelMessage[] {
+  const windowSteps = options?.windowSteps ?? 20
+  const { prefixMessages, steps } = groupMessagesIntoSteps(messages)
+
+  // If we have not exceeded the window limit, keep all steps
+  if (steps.length <= windowSteps) {
+    return messages
+  }
+
+  // Sliding window: keep the last windowSteps + any older step that called ask_player
+  const cutoffIndex = steps.length - windowSteps
+  const keptSteps = steps.filter((step, index) => {
+    if (index >= cutoffIndex) return true // Recent step inside window: keep
+    return step.hasAskPlayer // Older step outside window: keep only if player interaction
+  })
+
+  // Reconstitute the messages array cleanly
+  const result: ModelMessage[] = [...prefixMessages]
+  for (const step of keptSteps) {
+    result.push(step.assistantMsg)
+    result.push(...step.toolMessages)
+  }
+
+  return result
+}
+
+

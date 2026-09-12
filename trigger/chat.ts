@@ -6,7 +6,7 @@ import { z } from "zod"
 import * as Sentry from "@sentry/node"
 
 import { getLanguageModel } from "@/lib/ai/provider"
-import { sanitizeContext } from "@/lib/ai/sanitizer"
+import { sanitizeContext, sanitizeStep } from "@/lib/ai/sanitizer"
 import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
 import { generateGameTitle } from "@/lib/games/title"
 import { instructions } from "@/lib/games/instructions"
@@ -90,7 +90,10 @@ function finalizeMessageParts(
           "dimension" in (part.input as Record<string, unknown>))
 
       if (isAskPlayer) {
-        if (toolPart.output !== undefined || toolPart.state === "output-available") {
+        if (
+          toolPart.output !== undefined ||
+          toolPart.state === "output-available"
+        ) {
           return part
         }
         if (toolPart.state === "input-available") {
@@ -497,11 +500,19 @@ export const gameChat = chat.agent({
 
       stopWhen: stepCountIs(50),
       maxRetries: 4,
+
+      prepareStep: async ({ messages: stepMessages }) => {
+        return {
+          messages: sanitizeStep(stepMessages, { windowSteps: 20 }),
+        }
+      },
+
       providerOptions: {
         vertex: {
           thinkingConfig: {
             includeThoughts: true,
           },
+
           // streamFunctionCallArguments: true,
         },
 
