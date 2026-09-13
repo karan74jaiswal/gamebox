@@ -9,6 +9,8 @@ import {
   Gamepad2,
   AlertCircle,
   RefreshCcw,
+  Maximize2,
+  Minimize2,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -40,6 +42,7 @@ export function ChatPreview({
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null)
   const [isIframeLoaded, setIsIframeLoaded] = React.useState(false)
   const [isReloading, setIsReloading] = React.useState(false)
+  const [isFullscreen, setIsFullscreen] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [gameRuntimeError, setGameRuntimeError] = React.useState<string | null>(null)
   const [iframeKey, setIframeKey] = React.useState(0)
@@ -254,18 +257,64 @@ export function ChatPreview({
     }
   }, [])
 
+  React.useEffect(() => {
+    if (!isFullscreen) return
+
+    const originalOverflow = document.body.style.overflow
+    document.body.style.overflow = "hidden"
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsFullscreen(false)
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown)
+    return () => {
+      document.body.style.overflow = originalOverflow
+      window.removeEventListener("keydown", handleKeyDown)
+    }
+  }, [isFullscreen])
+
   // Conditionally render nothing if sandboxId is missing
   if (!sandboxId) {
     return null
   }
 
   return (
-    <div
-      className={cn(
-        "flex h-full w-full animate-in flex-col overflow-hidden bg-background text-foreground duration-700 fade-in-50",
-        className
+    <>
+      {isFullscreen && (
+        <div className="flex h-full w-full flex-col items-center justify-center bg-muted/10 p-6 text-center text-muted-foreground border-l border-border">
+          <div className="flex size-12 items-center justify-center rounded-2xl border border-border/60 bg-muted/30 text-muted-foreground mb-3 shadow-xs">
+            <Gamepad2 className="size-6" />
+          </div>
+          <p className="text-sm font-medium text-foreground">
+            Preview active in fullscreen
+          </p>
+          <p className="max-w-xs text-xs text-muted-foreground mt-1">
+            The live game preview is currently expanded. Your gameplay progress and state are fully preserved.
+          </p>
+          <Button
+            variant="outline"
+            size="xs"
+            onClick={() => setIsFullscreen(false)}
+            className="mt-4 gap-1.5 text-xs"
+          >
+            <Minimize2 className="size-3" />
+            Exit Fullscreen
+          </Button>
+        </div>
       )}
-    >
+
+      <div
+        className={cn(
+          "flex h-full w-full flex-col overflow-hidden bg-background text-foreground",
+          isFullscreen
+            ? "fixed inset-0 z-50 h-screen w-screen shadow-2xl"
+            : "animate-in duration-700 fade-in-50",
+          className
+        )}
+      >
       {/* Top toolbar */}
       <div className="flex h-11 shrink-0 items-center justify-between border-b border-border bg-muted/30 px-3.5">
         <div className="flex items-center gap-2">
@@ -352,6 +401,26 @@ export function ChatPreview({
                 </TooltipTrigger>
                 <TooltipContent side="bottom">Open in new tab</TooltipContent>
               </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => setIsFullscreen((prev) => !prev)}
+                      aria-label="Fullscreen"
+                    />
+                  }
+                >
+                  {isFullscreen ? (
+                    <Minimize2 className="size-3.5 text-muted-foreground hover:text-foreground" />
+                  ) : (
+                    <Maximize2 className="size-3.5 text-muted-foreground hover:text-foreground" />
+                  )}
+                </TooltipTrigger>
+                <TooltipContent side="bottom">Fullscreen</TooltipContent>
+              </Tooltip>
             </>
           )}
 
@@ -423,7 +492,7 @@ export function ChatPreview({
                 "h-full w-full border-0 bg-background transition-opacity duration-300",
                 isIframeLoaded ? "opacity-100" : "opacity-0"
               )}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
               sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
               onLoad={() => {
                 if (reloadTimeoutRef.current) {
@@ -456,6 +525,7 @@ export function ChatPreview({
         ) : null}
       </div>
     </div>
+    </>
   )
 }
 

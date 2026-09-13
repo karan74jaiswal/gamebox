@@ -1,3 +1,5 @@
+import fs from "node:fs"
+import path from "node:path"
 import { NextRequest } from "next/server"
 import * as Sentry from "@sentry/nextjs"
 import {
@@ -9,6 +11,21 @@ import { getGame } from "@/lib/games/queries"
 
 // In-memory cache for preview base URLs to keep asset requests fast
 const previewUrlCache = new Map<string, { url: string; expiresAt: number }>()
+
+let cachedLogoSvg: string | null = null
+function getLogoSvg(): string | null {
+  if (!cachedLogoSvg) {
+    try {
+      const logoPath = path.resolve(process.cwd(), "public/logo.svg")
+      if (fs.existsSync(logoPath)) {
+        cachedLogoSvg = fs.readFileSync(logoPath, "utf-8")
+      }
+    } catch {
+      // Ignore
+    }
+  }
+  return cachedLogoSvg
+}
 
 export function setCachedPreviewUrl(
   sandboxId: string,
@@ -130,25 +147,44 @@ export async function GET(
     })
   }
 
+  // If favicon was requested but upstream returned 404 (e.g. older sandbox), fallback to app logo
+  if (
+    response.status === 404 &&
+    (subpath === "favicon.svg" || subpath === "favicon.ico")
+  ) {
+    const logoSvg = getLogoSvg()
+    if (logoSvg) {
+      return new Response(logoSvg, {
+        status: 200,
+        headers: {
+          "content-type": "image/svg+xml",
+          "cache-control": "public, max-age=86400",
+        },
+      })
+    }
+  }
+
   const contentType = response.headers.get("content-type") || ""
 
-  // Inject base tag and custom scrollbar styling into HTML documents
+  // Inject base tag, favicon, and custom scrollbar styling into HTML documents
   if (contentType.includes("text/html")) {
     let html = await response.text()
     const baseTag = `<base href="/api/games/${id}/preview/live/">`
+    const faviconTag =
+      !html.includes('rel="icon"') && !html.includes("rel='icon'")
+        ? `\n  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />`
+        : ""
+    const injectedHead = `<head>\n  ${baseTag}${faviconTag}\n  ${SCROLLBAR_STYLE}`
 
     if (html.includes("<head>")) {
-      html = html.replace(
-        "<head>",
-        `<head>\n  ${baseTag}\n  ${SCROLLBAR_STYLE}`
-      )
+      html = html.replace("<head>", injectedHead)
     } else if (html.includes("<html>")) {
       html = html.replace(
         "<html>",
-        `<html>\n<head>\n  ${baseTag}\n  ${SCROLLBAR_STYLE}\n</head>`
+        `<html>\n${injectedHead}\n</head>`
       )
     } else {
-      html = `<!DOCTYPE html>\n<html>\n<head>\n  ${baseTag}\n  ${SCROLLBAR_STYLE}\n</head>\n<body>\n${html}\n</body>\n</html>`
+      html = `<!DOCTYPE html>\n<html>\n${injectedHead}\n</head>\n<body>\n${html}\n</body>\n</html>`
     }
 
     const resHeaders = new Headers(response.headers)

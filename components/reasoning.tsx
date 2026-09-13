@@ -66,22 +66,24 @@ export function Reasoning({ part, isStreaming }: ReasoningProps) {
           )}
         />
       </CollapsibleTrigger>
-      <CollapsibleContent className="border-t border-border/20 px-3 pt-1.5 pb-2.5 text-xs leading-relaxed">
-        <div
-          ref={scrollContainerRef}
-          className="max-h-60 overflow-y-auto font-sans select-text"
-        >
-          {cleanText ? (
-            <Markdown
-              content={cleanText}
-              isStreaming={activeStreaming}
-              className="text-xs text-muted-foreground/90 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:text-xs [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_code]:text-[11px] [&_pre]:my-1.5 [&_pre]:p-2"
-            />
-          ) : activeStreaming ? (
-            <span className="italic text-muted-foreground">
-              Deliberating...
-            </span>
-          ) : null}
+      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0 [&[hidden]:not([hidden='until-found'])]:hidden">
+        <div className="border-t border-border/20 px-3 pt-1.5 pb-2.5 text-xs leading-relaxed">
+          <div
+            ref={scrollContainerRef}
+            className="max-h-60 overflow-y-auto font-sans select-text"
+          >
+            {cleanText ? (
+              <Markdown
+                content={cleanText}
+                isStreaming={activeStreaming}
+                className="text-xs text-muted-foreground/90 [&_h1]:text-sm [&_h1]:font-semibold [&_h2]:text-xs [&_h2]:font-semibold [&_h3]:text-xs [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_code]:text-[11px] [&_pre]:my-1.5 [&_pre]:p-2"
+              />
+            ) : activeStreaming ? (
+              <span className="italic text-muted-foreground">
+                Deliberating...
+              </span>
+            ) : null}
+          </div>
         </div>
       </CollapsibleContent>
     </Collapsible>

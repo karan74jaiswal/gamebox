@@ -262,6 +262,7 @@ export function AppSidebar({
               <SidebarMenuItem>
                 <SidebarMenuButton
                   isActive={pathname === "/"}
+                  tooltip="New game"
                   render={<Link href="/" />}
                 >
                   <SquarePen />
@@ -290,6 +291,7 @@ export function AppSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton
               isActive={pathname === "/billing"}
+              tooltip="Credits"
               render={<Link href="/billing" />}
             >
               <Coins />
