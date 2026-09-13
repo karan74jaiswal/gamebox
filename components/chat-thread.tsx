@@ -449,7 +449,10 @@ export function ChatThread({
   }
 
   const handleAnswerPlayer = React.useCallback(
-    (toolCallId: string, output: { id: string; label: string }) => {
+    (
+      toolCallId: string,
+      output: { id: string; label: string; description: string }
+    ) => {
       const modelToUse = selectedModelRef.current
       addToolOutput({
         tool: "ask_player",

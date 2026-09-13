@@ -203,9 +203,10 @@ export function getAskPlayerChosenLabel(
     }
   }
 
-  // 3. Extract label or id
+  // 3. Extract label, id, and description
   let chosenLabel: string | undefined
   let chosenId: string | undefined
+  let chosenDescription: string | undefined
 
   if (typeof unwrapped === "object" && unwrapped !== null) {
     const record = unwrapped as Record<string, unknown>
@@ -223,32 +224,53 @@ export function getAskPlayerChosenLabel(
     } else if (typeof record.chosenId === "string" && record.chosenId.trim()) {
       chosenId = record.chosenId.trim()
     }
+
+    if (typeof record.description === "string" && record.description.trim()) {
+      chosenDescription = record.description.trim()
+    } else if (
+      typeof record.chosenDescription === "string" &&
+      record.chosenDescription.trim()
+    ) {
+      chosenDescription = record.chosenDescription.trim()
+    }
   } else if (typeof unwrapped === "string" && unwrapped.trim()) {
     chosenLabel = unwrapped.trim()
   }
 
-  if (chosenLabel) {
-    return chosenLabel
-  }
-
-  // 4. Fallback: If only ID was returned, lookup the label from question options
-  if (chosenId && typeof input === "object" && input !== null) {
-    const inputRec = input as Record<string, unknown>
+  // 4. Lookup from question options to enrich with missing label or description
+  if (typeof input === "object" && input !== null) {
+    let inputRec: Record<string, unknown> = input as Record<string, unknown>
+    if ("value" in inputRec && typeof inputRec.value === "object" && inputRec.value !== null) {
+      inputRec = inputRec.value as Record<string, unknown>
+    }
     const options = Array.isArray(inputRec.options) ? inputRec.options : []
     const matched = options.find(
-      (opt): opt is { id: string; label: string } =>
+      (opt): opt is { id?: string; label?: string; description?: string } =>
         typeof opt === "object" &&
         opt !== null &&
-        "id" in opt &&
-        (opt as { id: unknown }).id === chosenId
+        Boolean(
+          (chosenId && (opt as { id?: unknown }).id === chosenId) ||
+          (chosenLabel && (opt as { label?: unknown }).label === chosenLabel)
+        )
     )
-    if (matched && typeof matched.label === "string" && matched.label.trim()) {
-      return matched.label.trim()
+
+    if (matched) {
+      if (!chosenLabel && typeof matched.label === "string" && matched.label.trim()) {
+        chosenLabel = matched.label.trim()
+      }
+      if (!chosenDescription && typeof matched.description === "string" && matched.description.trim()) {
+        chosenDescription = matched.description.trim()
+      }
     }
-    return chosenId
   }
 
-  return chosenId || "Selected option"
+  const finalLabel = chosenLabel || chosenId || "Selected option"
+
+  if (chosenDescription && chosenDescription !== finalLabel) {
+    return `${finalLabel}: ${chosenDescription}`
+  }
+
+  return finalLabel
 }
 
 function pruneTokensFromMessage(

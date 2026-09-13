@@ -322,6 +322,11 @@ export type AskPlayerInput = z.infer<typeof askPlayerInputSchema>
 export const askPlayerOutputSchema = z.object({
   id: z.string().describe("The chosen option's id"),
   label: z.string().describe("The chosen option's label"),
+  description: z
+    .string()
+    .describe(
+      "The chosen option's description explaining what choosing this option entails"
+    ),
 })
 
 export type AskPlayerOutput = z.infer<typeof askPlayerOutputSchema>

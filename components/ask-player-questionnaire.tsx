@@ -43,6 +43,7 @@ export interface AskPlayerInput {
 export interface AskPlayerOutput {
   id?: string
   label?: string
+  description?: string
 }
 
 export const DIMENSION_CONFIG: Record<
@@ -60,7 +61,7 @@ export const DIMENSION_CONFIG: Record<
 
 export interface AskPlayerQuestionnaireProps {
   part: Extract<UIMessage["parts"][number], { toolCallId: string }>
-  onAnswer: (output: { id: string; label: string }) => void
+  onAnswer: (output: { id: string; label: string; description: string }) => void
 }
 
 export function AskPlayerQuestionnaire({
@@ -134,6 +135,7 @@ export function AskPlayerQuestionnaire({
     onAnswer({
       id: chosenOption.id,
       label: chosenOption.label,
+      description: chosenOption.description ?? "",
     })
   }
 

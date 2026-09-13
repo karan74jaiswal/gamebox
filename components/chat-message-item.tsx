@@ -63,7 +63,7 @@ export interface ChatMessageItemProps {
   isGenerating: boolean
   handleAnswerPlayer: (
     toolCallId: string,
-    output: { id: string; label: string }
+    output: { id: string; label: string; description: string }
   ) => void
 }
 
