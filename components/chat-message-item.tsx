@@ -20,12 +20,13 @@ import { ToolCall, getToolStatus } from "@/components/tool-call"
 import { Reasoning } from "@/components/reasoning"
 import { AskPlayerQuestionnaire } from "@/components/ask-player-questionnaire"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
+import type { MessageErrorMetadata } from "@/lib/db/schema"
 
 export function hasVisibleAssistantContent(message?: UIMessage) {
   if (!message || message.role !== "assistant") return false
 
   const isErrorMessage = Boolean(
-    (message.metadata as { isError?: boolean } | undefined)?.isError
+    (message.metadata as MessageErrorMetadata | undefined)?.isError
   )
   if (isErrorMessage) return true
 
@@ -74,11 +75,10 @@ export function ChatMessageItem({
 }: ChatMessageItemProps) {
   const isAssistant = message.role === "assistant"
 
-  const isErrorMessage = Boolean(
-    (message.metadata as { isError?: boolean } | undefined)?.isError
-  )
+  const meta = message.metadata as MessageErrorMetadata | undefined
+  const isErrorMessage = Boolean(meta?.isError)
   const errorText =
-    (message.metadata as { errorText?: string } | undefined)?.errorText ||
+    meta?.errorText ||
     "The model failed to generate a response. Please try again or select a different model."
 
   const textParts =

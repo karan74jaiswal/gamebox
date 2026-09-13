@@ -1,4 +1,9 @@
-import { pruneMessages, type ModelMessage } from "ai"
+import {
+  pruneMessages,
+  type ModelMessage,
+  type ToolCallPart,
+  type ToolResultPart,
+} from "ai"
 
 export interface ContextSanitizerOptions {
   /**
@@ -55,6 +60,234 @@ export const DEFAULT_PRUNED_TOKENS: Array<string | RegExp> = [
 ]
 
 /**
+ * Transforms completed `ask_player` interactions from PREVIOUS turns into clean Q&A text.
+ *
+ * Rules:
+ * 1. If an `ask_player` was answered in the immediate preceding step/turn (toolMsgIndex === n - 1),
+ *    the user JUST answered this turn (e.g., Turn 4). We leave it as live tool-call + tool-result
+ *    so the LLM receives the tool response to complete its loop.
+ * 2. If there are subsequent messages after the tool response (toolMsgIndex < n - 1),
+ *    the interaction is from an older turn (e.g. Turn 3 question + Turn 4 answer seen from Turn 5).
+ *    We transform it into:
+ *      Assistant: "<question>"
+ *      User: "<label>"
+ * 3. Never called from sanitizeStep (mid-step); only called from sanitizeContext at turn start.
+ */
+export function compactHistoricalAskPlayerCalls(
+  messages: ModelMessage[]
+): ModelMessage[] {
+  const n = messages.length
+  if (n === 0) return messages
+
+  const result: ModelMessage[] = []
+
+  for (let i = 0; i < n; i++) {
+    const msg = messages[i]
+
+    if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      const toolCall = msg.content.find(
+        (part): part is ToolCallPart =>
+          part.type === "tool-call" && part.toolName === "ask_player"
+      )
+
+      if (toolCall) {
+        const toolMsgIdx = messages.findIndex(
+          (candidate, idx) =>
+            idx > i &&
+            candidate.role === "tool" &&
+            Array.isArray(candidate.content) &&
+            candidate.content.some(
+              (p): p is ToolResultPart =>
+                p.type === "tool-result" && p.toolCallId === toolCall.toolCallId
+            )
+        )
+
+        // Only compact if completed in an earlier turn (not the active trailing answer of current turn)
+        if (toolMsgIdx !== -1 && toolMsgIdx < n - 1) {
+          const toolMsg = messages[toolMsgIdx]
+          const toolResult = Array.isArray(toolMsg.content)
+            ? toolMsg.content.find(
+                (p): p is ToolResultPart =>
+                  p.type === "tool-result" &&
+                  p.toolCallId === toolCall.toolCallId
+              )
+            : undefined
+
+          const question = getAskPlayerQuestion(toolCall.input)
+          const chosenLabel = getAskPlayerChosenLabel(
+            toolResult?.output,
+            toolCall.input
+          )
+
+          result.push({
+            role: "assistant",
+            content: [{ type: "text", text: question }],
+          })
+          result.push({
+            role: "user",
+            content: [{ type: "text", text: chosenLabel }],
+          })
+
+          // Skip to after the consumed tool message
+          i = toolMsgIdx
+          continue
+        }
+      }
+    }
+
+    result.push(msg)
+  }
+
+  return result
+}
+
+function getAskPlayerQuestion(args: unknown): string {
+  let unwrapped: unknown = args
+  if (typeof unwrapped === "string") {
+    try {
+      unwrapped = JSON.parse(unwrapped)
+    } catch {
+      // not json
+    }
+  }
+  if (typeof unwrapped === "object" && unwrapped !== null) {
+    const record = unwrapped as Record<string, unknown>
+    if ("value" in record && record.value !== undefined) {
+      unwrapped = record.value
+    }
+  }
+  if (
+    typeof unwrapped === "object" &&
+    unwrapped !== null &&
+    "question" in unwrapped
+  ) {
+    const q = (unwrapped as Record<string, unknown>).question
+    if (typeof q === "string" && q.trim()) {
+      return q.trim()
+    }
+  }
+  return "Design question"
+}
+
+export function getAskPlayerChosenLabel(
+  output: unknown,
+  input?: unknown
+): string {
+  if (!output) return "Selected option"
+
+  let unwrapped: unknown = output
+
+  // 1. If output is stringified JSON, parse it
+  if (typeof unwrapped === "string") {
+    const trimmed = unwrapped.trim()
+    try {
+      unwrapped = JSON.parse(trimmed)
+    } catch {
+      if (trimmed) return trimmed
+    }
+  }
+
+  // 2. Unwrap AI SDK's { type: 'json', value: ... } wrapper
+  if (typeof unwrapped === "object" && unwrapped !== null) {
+    const record = unwrapped as Record<string, unknown>
+    if ("value" in record && record.value !== undefined) {
+      unwrapped = record.value
+      if (typeof unwrapped === "string") {
+        const trimmedVal = unwrapped.trim()
+        try {
+          unwrapped = JSON.parse(trimmedVal)
+        } catch {
+          if (trimmedVal) return trimmedVal
+        }
+      }
+    }
+  }
+
+  // 3. Extract label or id
+  let chosenLabel: string | undefined
+  let chosenId: string | undefined
+
+  if (typeof unwrapped === "object" && unwrapped !== null) {
+    const record = unwrapped as Record<string, unknown>
+    if (typeof record.label === "string" && record.label.trim()) {
+      chosenLabel = record.label.trim()
+    } else if (
+      typeof record.chosenLabel === "string" &&
+      record.chosenLabel.trim()
+    ) {
+      chosenLabel = record.chosenLabel.trim()
+    }
+
+    if (typeof record.id === "string" && record.id.trim()) {
+      chosenId = record.id.trim()
+    } else if (typeof record.chosenId === "string" && record.chosenId.trim()) {
+      chosenId = record.chosenId.trim()
+    }
+  } else if (typeof unwrapped === "string" && unwrapped.trim()) {
+    chosenLabel = unwrapped.trim()
+  }
+
+  if (chosenLabel) {
+    return chosenLabel
+  }
+
+  // 4. Fallback: If only ID was returned, lookup the label from question options
+  if (chosenId && typeof input === "object" && input !== null) {
+    const inputRec = input as Record<string, unknown>
+    const options = Array.isArray(inputRec.options) ? inputRec.options : []
+    const matched = options.find(
+      (opt): opt is { id: string; label: string } =>
+        typeof opt === "object" &&
+        opt !== null &&
+        "id" in opt &&
+        (opt as { id: unknown }).id === chosenId
+    )
+    if (matched && typeof matched.label === "string" && matched.label.trim()) {
+      return matched.label.trim()
+    }
+    return chosenId
+  }
+
+  return chosenId || "Selected option"
+}
+
+function pruneTokensFromMessage(
+  message: ModelMessage,
+  tokens: Array<string | RegExp>
+): ModelMessage {
+  if (message.role === "system") {
+    return { ...message, content: pruneString(message.content, tokens) }
+  }
+  if (message.role === "user") {
+    if (typeof message.content === "string") {
+      return { ...message, content: pruneString(message.content, tokens) }
+    }
+    return {
+      ...message,
+      content: message.content.map((part) =>
+        part.type === "text"
+          ? { ...part, text: pruneString(part.text, tokens) }
+          : part
+      ),
+    }
+  }
+  if (message.role === "assistant") {
+    if (typeof message.content === "string") {
+      return { ...message, content: pruneString(message.content, tokens) }
+    }
+    return {
+      ...message,
+      content: message.content.map((part) =>
+        part.type === "text"
+          ? { ...part, text: pruneString(part.text, tokens) }
+          : part
+      ),
+    }
+  }
+  return message
+}
+
+/**
  * Sanitizes and prunes conversation messages using the official Vercel AI SDK `pruneMessages` API.
  * Eliminates context bloat from historical tool calls and ephemeral reasoning while
  * preserving valid tool call/result invariants and matching IDs.
@@ -67,10 +300,15 @@ export function sanitizeContext(
     return []
   }
 
-  // 1. Leverage the official AI SDK pruneMessages function
+  // 1. Compact completed ask_player tool calls from older turns into clean Q&A text.
+  // Left untouched if it is the active incoming answer of this turn.
+  const historyWithCompactedQuestions =
+    compactHistoricalAskPlayerCalls(messages)
+
+  // 2. Leverage the official AI SDK pruneMessages function
   // Prune only bulky filesystem tools from earlier turns, keeping human-in-the-loop (ask_player) decisions permanent
   let pruned = pruneMessages({
-    messages,
+    messages: historyWithCompactedQuestions,
     reasoning: options?.reasoning ?? "all",
     toolCalls: options?.toolCalls ?? [
       {
@@ -88,77 +326,10 @@ export function sanitizeContext(
     emptyMessages: options?.emptyMessages ?? "remove",
   })
 
-  // 2. Prune custom token / tag patterns if configured
+  // 3. Prune custom token / tag patterns if configured
   const tokens = [...DEFAULT_PRUNED_TOKENS, ...(options?.tokensToPrune ?? [])]
   if (tokens.length > 0) {
-    pruned = pruned.map((message) => {
-      if (message.role === "system") {
-        return {
-          ...message,
-          content: pruneString(message.content, tokens),
-        }
-      }
-
-      if (message.role === "user") {
-        if (typeof message.content === "string") {
-          return {
-            ...message,
-            content: pruneString(message.content, tokens),
-          }
-        }
-        return {
-          ...message,
-          content: message.content.map((part) => {
-            if (part.type === "text") {
-              return {
-                ...part,
-                text: pruneString(part.text, tokens),
-              }
-            }
-            return part
-          }),
-        }
-      }
-
-      if (message.role === "assistant") {
-        if (typeof message.content === "string") {
-          return {
-            ...message,
-            content: pruneString(message.content, tokens),
-          }
-        }
-        return {
-          ...message,
-          content: message.content.map((part) => {
-            if (part.type === "text") {
-              return {
-                ...part,
-                text: pruneString(part.text, tokens),
-              }
-            }
-            return part
-          }),
-        }
-      }
-
-      return message
-    })
-  }
-
-  // 3. Enforce alternating user/assistant roles required by LLM providers (Anthropic, Gemini)
-  if (options?.enforceAlternatingRoles !== false) {
-    return pruned.reduce<ModelMessage[]>((acc, current) => {
-      if (acc.length === 0) return [current]
-      const prev = acc[acc.length - 1]
-      if (prev.role === "user" && current.role === "user") {
-        acc.push({
-          role: "assistant",
-          content: "Understood. Proceeding with your next request.",
-        })
-      }
-      acc.push(current)
-      return acc
-    }, [])
+    pruned = pruned.map((message) => pruneTokensFromMessage(message, tokens))
   }
 
   return pruned
@@ -273,5 +444,3 @@ export function sanitizeStep(
 
   return result
 }
-
-

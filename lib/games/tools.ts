@@ -115,9 +115,9 @@ export const writeFileInputSchema = z.object({
     ),
   content: z
     .string()
-    .max(18000)
+    .max(35000)
     .describe(
-      "Initial text content for the brand new file. Maximum 18,000 characters (~350-400 lines). Scaffold a lightweight starter foundation; modularize larger games into separate files in js/."
+      "Initial text content for the brand new file. Maximum 35,000 characters (~700 lines). Scaffold a lightweight starter foundation; modularize larger games into separate files in js/."
     ),
 })
 
@@ -346,7 +346,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const write_file = tool({
     description:
-      "Create or overwrite a file inside the Daytona sandbox game directory (/home/daytona/game). Keep files concise (under 300 lines) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly. For targeted edits under 100 lines, prefer replace_text.",
+      "Create or overwrite a file inside the Daytona sandbox game directory (/home/daytona/game). Keep files concise (under 700 lines / 35,000 characters) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly. For targeted edits under 100 lines, prefer replace_text.",
     inputSchema: writeFileInputSchema,
     execute: async ({ path: filePath, content }) => {
       try {
@@ -354,11 +354,11 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         const sandbox = await resolveSandbox()
 
         const lines = content.length === 0 ? 0 : content.split(/\r?\n/).length
-        if (lines > 400) {
+        if (lines > 700) {
           return {
             success: false,
             path: relativePath,
-            error: `New file exceeds the 400-line limit (${lines} lines). Keep starter files concise (under 300 lines) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly or via targeted updates.`,
+            error: `New file exceeds the 700-line limit (${lines} lines). Keep starter files concise (under 700 lines / 35,000 characters) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly or via targeted updates.`,
           }
         }
 

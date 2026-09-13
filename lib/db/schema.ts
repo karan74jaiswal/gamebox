@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai"
+import type { ErrorCategory } from "@/lib/ai/errors"
 import {
   bigint,
   index,
@@ -9,6 +10,20 @@ import {
   unique,
   uuid,
 } from "drizzle-orm/pg-core"
+
+export interface MessageErrorMetadata {
+  isError?: boolean
+  errorText?: string
+  errorCategory?: ErrorCategory
+  errorType?: string
+  statusCode?: number
+  errorCode?: string
+  rawError?: string
+  errorDetails?: Record<string, unknown>
+}
+
+export type GameMessageMetadata = MessageErrorMetadata & Record<string, unknown>
+export type GameChatMessage = UIMessage<GameMessageMetadata>
 
 export const games = pgTable(
   "games",

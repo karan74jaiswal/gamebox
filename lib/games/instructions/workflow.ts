@@ -278,7 +278,7 @@ Evaluate the player's prompt across these 7 dimensions to identify what is undec
   - \`write_file\` is used for creating new foundation files or full rewrites.
   - Incorporate all design choices established in Phase 1 (camera perspective, color palettes, initial lighting, audio genre).
   - Set up \`Gamebox.create()\`, the 3D scene, lighting preset, and player character mesh.
-  - Keep the initial scaffold concise (under 150-200 lines, schema-capped at 18,000 chars / 400 lines) so the preview renders immediately without lag and avoids token quota exhaustion.
+  - Keep the initial scaffold concise (schema-capped at 35,000 chars / 700 lines) so the preview renders immediately without lag and avoids token quota exhaustion.
 
 ---
 
@@ -305,7 +305,7 @@ Evaluate the player's prompt across these 7 dimensions to identify what is undec
 - \`ask_player\`: Pauses generation for human-in-the-loop decision making on a specific dimension (\`loop\`, \`goal\`, \`world\`, \`look\`, \`feel\`, \`challenge\`, \`controls\`).
 - \`replace_text\`: **HIGHEST PRIORITY for existing files**. Surgically replaces exact code snippets without rewriting whole files.
 - \`update_file\`: Targeted modifications to existing files (\`replace_lines\`, \`insert_at_line\`, \`append\`, \`prepend\`). Strictly under 150 lines per call. Never rewrites full files.
-- \`write_file\`: Creates or overwrites foundation files (max 300-400 lines / 18,000 characters). For existing files with small modifications, prefer \`replace_text\` or \`update_file\`.
+- \`write_file\`: Creates or overwrites foundation files (max 700 lines / 35,000 characters). For existing files with small modifications, prefer \`replace_text\` or \`update_file\`.
 - \`read_file\`: Reads a targeted range of lines from sandbox files. Requires \`startLine\` and \`lineCount\` (strictly 1 to 250 lines maximum, enforced by schema). Check line count via \`list_files\` first.
 - \`list_files\`: Lists sandbox directories to inspect files, returning file sizes and line counts (\`lines\`).
 - \`delete_file\`: Removes obsolete files.

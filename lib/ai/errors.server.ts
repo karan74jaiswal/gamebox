@@ -7,97 +7,39 @@ import {
   LoadAPIKeyError,
   StreamProviderError,
 } from "ai"
+import {
+  DaytonaError,
+  DaytonaRateLimitError,
+  DaytonaTimeoutError,
+  DaytonaConnectionError,
+  DaytonaConnectionTimeoutError,
+  DaytonaProcessExecutionTimeoutError,
+  DaytonaAuthenticationError,
+  DaytonaForbiddenError,
+  DaytonaBadRequestError,
+  DaytonaNotFoundError,
+  DaytonaConflictError,
+  DaytonaInternalServerError,
+  DaytonaBadGatewayError,
+  DaytonaServiceUnavailableError,
+} from "@daytona/sdk"
 
-export type ErrorCategory =
-  | "rate_limit"
-  | "service_outage"
-  | "network_timeout"
-  | "auth_failure"
-  | "context_length"
-  | "safety_filter"
-  | "sandbox_error"
-  | "tool_validation"
-  | "tool_execution"
-  | "aborted"
-  | "unknown"
+import {
+  type ResolvedError,
+  type ErrorCategory,
+  isAbortError,
+  extractRawMessage,
+} from "./errors"
 
-export interface ResolvedError {
-  /** Clean, user-friendly message safe for display in the chat UI */
-  userMessage: string
-  /** High-level semantic category for quick filtering in DB and analytics */
-  category: ErrorCategory
-  /** Technical error class or code (e.g. 'APICallError', 'DaytonaTimeoutError') */
-  errorType: string
-  /** HTTP status code if available (e.g. 429, 503, 401, 500) */
-  statusCode?: number
-  /** Specific machine-readable code (e.g. 'RESOURCE_EXHAUSTED', 'DAYTONA_TIMEOUT') */
-  code?: string
-  /** Exact technical raw message or stack */
-  rawMessage: string
-  /** Structured technical debug context (e.g. URL, toolName, Zod issues) */
-  details?: Record<string, unknown>
-}
+export { type ResolvedError, type ErrorCategory }
+export const resolveError = resolveServerError
 
 /**
- * Checks if an error represents an intentional cancellation / abort.
+ * Resolves errors occurring during server-side AI execution and tool execution (Trigger.dev).
+ * Uses official typed error classes from AI SDK and Daytona SDK for high-fidelity classification,
+ * status code extraction, machine-readable codes, and clean user-facing explanations.
  */
-export function isAbortError(error: unknown): boolean {
-  if (!error) return false
-  if (error instanceof Error) {
-    if (error.name === "AbortError" || error.name === "CancellationError")
-      return true
-    const msg = error.message.toLowerCase()
-    return (
-      msg.includes("aborted") || msg.includes("abort") || msg.includes("cancel")
-    )
-  }
-  if (typeof error === "string") {
-    const lower = error.toLowerCase()
-    return (
-      lower.includes("aborted") ||
-      lower.includes("abort") ||
-      lower.includes("cancel")
-    )
-  }
-  if (
-    typeof error === "object" &&
-    "message" in (error as Record<string, unknown>)
-  ) {
-    const msg = String((error as Record<string, unknown>).message).toLowerCase()
-    return (
-      msg.includes("aborted") || msg.includes("abort") || msg.includes("cancel")
-    )
-  }
-  return false
-}
-
-export function extractRawMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.stack || error.message || error.name
-  }
-  if (typeof error === "string") return error
-  if (typeof error === "object" && error !== null) {
-    if (
-      "message" in error &&
-      typeof (error as { message?: unknown }).message === "string"
-    ) {
-      return (error as { message: string }).message
-    }
-    try {
-      return JSON.stringify(error)
-    } catch {
-      return String(error)
-    }
-  }
-  return String(error ?? "Unknown error")
-}
-
-/**
- * Resolves an error using official typed error classes from AI SDK and Daytona SDK.
- * Extracts the HTTP status code, technical error type, exact raw message, and
- * a clean user-facing string.
- */
-export function resolveError(
+export function resolveServerError(
   error: unknown,
   finishReason?: string
 ): ResolvedError {
@@ -179,7 +121,7 @@ export function resolveError(
   // 2. AI SDK RetryError (multiple continuous failures across retries)
   if (RetryError.isInstance(error)) {
     const underlying = error.lastError
-      ? resolveError(error.lastError)
+      ? resolveServerError(error.lastError)
       : undefined
     const category = underlying?.category ?? "service_outage"
     return {
@@ -289,7 +231,7 @@ export function resolveError(
     }
   }
 
-  // 4. AI SDK InvalidToolInputError / TypeValidationError
+  // 4. AI SDK Tool & Streaming Errors
   if (InvalidToolInputError.isInstance(error)) {
     const raw = extractRawMessage(error)
     return {
@@ -358,7 +300,141 @@ export function resolveError(
     }
   }
 
-  // 5. Fallback String Inspection (safety net for raw grpc or non-SDK errors)
+  // 5. Official Daytona SDK Errors
+  if (error instanceof DaytonaError) {
+    const raw = extractRawMessage(error)
+    const statusCode = error.statusCode
+    const code = error.code
+    const errorType = error.constructor.name || error.name || "DaytonaError"
+
+    if (error instanceof DaytonaRateLimitError || statusCode === 429) {
+      return {
+        userMessage:
+          "The game sandbox environment reached a rate limit. Please wait a moment and try again.",
+        category: "rate_limit",
+        errorType,
+        statusCode: 429,
+        code: code || "DAYTONA_RATE_LIMIT",
+        rawMessage: raw,
+        details: { source: error.source },
+      }
+    }
+
+    if (
+      error instanceof DaytonaTimeoutError ||
+      error instanceof DaytonaConnectionTimeoutError ||
+      error instanceof DaytonaProcessExecutionTimeoutError ||
+      statusCode === 504
+    ) {
+      return {
+        userMessage:
+          "Connection to the game sandbox container timed out. Please try again.",
+        category: "network_timeout",
+        errorType,
+        statusCode: statusCode ?? 504,
+        code: code || "DAYTONA_TIMEOUT",
+        rawMessage: raw,
+        details: { source: error.source },
+      }
+    }
+
+    if (error instanceof DaytonaConnectionError) {
+      return {
+        userMessage:
+          "Connection to the game sandbox container was interrupted. Please try again.",
+        category: "network_timeout",
+        errorType,
+        statusCode: statusCode ?? 503,
+        code: code || "DAYTONA_CONNECTION_ERROR",
+        rawMessage: raw,
+        details: { source: error.source },
+      }
+    }
+
+    if (
+      error instanceof DaytonaAuthenticationError ||
+      error instanceof DaytonaForbiddenError
+    ) {
+      return {
+        userMessage:
+          "Authentication with the Daytona sandbox failed. Please check sandbox credentials.",
+        category: "auth_failure",
+        errorType,
+        statusCode: statusCode ?? (error instanceof DaytonaAuthenticationError ? 401 : 403),
+        code: code || "DAYTONA_AUTH_FAILED",
+        rawMessage: raw,
+        details: { source: error.source },
+      }
+    }
+
+    if (error instanceof DaytonaNotFoundError) {
+      return {
+        userMessage:
+          "The requested file or resource was not found in the game sandbox. Please check the file path and try again.",
+        category: "sandbox_error",
+        errorType,
+        statusCode: 404,
+        code: code || "DAYTONA_NOT_FOUND",
+        rawMessage: raw,
+        details: { source: error.source },
+      }
+    }
+
+    if (error instanceof DaytonaConflictError) {
+      return {
+        userMessage:
+          "A state conflict occurred in the game development sandbox. Please retry the operation.",
+        category: "sandbox_error",
+        errorType,
+        statusCode: 409,
+        code: code || "DAYTONA_CONFLICT",
+        rawMessage: raw,
+        details: { source: error.source },
+      }
+    }
+
+    if (error instanceof DaytonaBadRequestError) {
+      return {
+        userMessage:
+          "The game development sandbox rejected the request parameter or format. Please try again.",
+        category: "tool_validation",
+        errorType,
+        statusCode: 400,
+        code: code || "DAYTONA_BAD_REQUEST",
+        rawMessage: raw,
+        details: { source: error.source },
+      }
+    }
+
+    if (
+      error instanceof DaytonaInternalServerError ||
+      error instanceof DaytonaBadGatewayError ||
+      error instanceof DaytonaServiceUnavailableError ||
+      (statusCode !== undefined && statusCode >= 500)
+    ) {
+      return {
+        userMessage: `The game development sandbox encountered an internal error (${code || statusCode || "500"}). Please try again shortly.`,
+        category: "sandbox_error",
+        errorType,
+        statusCode,
+        code: code || "DAYTONA_SERVER_ERROR",
+        rawMessage: raw,
+        details: { source: error.source },
+      }
+    }
+
+    return {
+      userMessage: `The game sandbox encountered an issue (${code || "sandbox error"}). Please try again.`,
+      category: "sandbox_error",
+      errorType,
+      statusCode,
+      code,
+      rawMessage: raw,
+      details: { source: error.source },
+    }
+  }
+
+  // 6. Fallback String Inspection (safety net for raw grpc or non-SDK errors)
   const raw = extractRawMessage(error)
   const lower = raw.toLowerCase()
 
@@ -400,13 +476,20 @@ export function resolveError(
     lower.includes("context_length") ||
     lower.includes("context length") ||
     lower.includes("token limit") ||
-    lower.includes("too long")
+    lower.includes("too long") ||
+    lower.includes("finishreason: length") ||
+    lower.includes("finishreason was 'length'") ||
+    lower.includes("max_tokens") ||
+    lower.includes("maximum output tokens") ||
+    lower.includes("max output token")
   ) {
     return {
       userMessage:
-        "The conversation has exceeded the model's capacity. Please start a new chat.",
+        "The response exceeded the model's maximum output token limit and was cut off. Please ask to generate smaller files or split the work into smaller steps.",
       category: "context_length",
-      errorType: "ContextLengthError",
+      errorType: "MaxOutputTokensError",
+      statusCode: 400,
+      code: "MAX_OUTPUT_TOKENS_EXCEEDED",
       rawMessage: raw,
     }
   }
@@ -480,12 +563,4 @@ export function resolveError(
     errorType: error instanceof Error ? error.name : "UnknownError",
     rawMessage: raw,
   }
-}
-
-/**
- * Sanitizes model and provider errors into friendly, non-technical plain English messages.
- * Preserved for backward compatibility across the codebase.
- */
-export function sanitizeErrorMessage(error: unknown): string {
-  return resolveError(error).userMessage
 }
