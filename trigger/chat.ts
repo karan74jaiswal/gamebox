@@ -1,6 +1,15 @@
 import { locals, logger } from "@trigger.dev/sdk"
 import { chat, upsertIncomingMessage } from "@trigger.dev/sdk/ai"
-import { streamText, stepCountIs, type UIMessage } from "ai"
+import {
+  streamText,
+  stepCountIs,
+  isToolUIPart,
+  isTextUIPart,
+  isReasoningUIPart,
+  getToolName,
+  type ModelMessage,
+  type UIMessage,
+} from "ai"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
 import * as Sentry from "@sentry/node"
@@ -33,62 +42,34 @@ function finalizeMessageParts(
 
   return parts.map((part) => {
     // Finalize in-flight / unfinished tool calls
-    if (typeof part === "object" && part !== null && "toolCallId" in part) {
-      const toolPart = part as {
-        type?: string
-        toolName?: string
-        state?: string
-        toolCallId: string
-        errorText?: string
-        rawError?: string
-        output?: unknown
-      }
-
-      // Do not convert ask_player into output-error if it already has an answer or if waiting for answer
-      const isAskPlayer =
-        toolPart.type === "tool-ask_player" ||
-        toolPart.toolName === "ask_player" ||
-        (typeof part === "object" &&
-          "input" in part &&
-          typeof part.input === "object" &&
-          part.input !== null &&
-          "dimension" in (part.input as Record<string, unknown>))
-
-      if (isAskPlayer) {
+    if (isToolUIPart(part)) {
+      // Interactive ask_player tool: preserve if answered or waiting for answer
+      if (getToolName(part) === "ask_player") {
         if (
-          toolPart.output !== undefined ||
-          toolPart.state === "output-available"
+          part.state === "output-available" ||
+          part.state === "input-available"
         ) {
-          return part
-        }
-        if (toolPart.state === "input-available") {
           return part
         }
       }
 
       if (
-        toolPart.state === "input-streaming" ||
-        toolPart.state === "input-available"
+        part.state === "input-streaming" ||
+        part.state === "input-available"
       ) {
         return {
           ...part,
           state: "output-error",
-          input:
-            "input" in toolPart && toolPart.input !== undefined
-              ? toolPart.input
-              : {},
+          input: part.input ?? {},
           errorText: fallbackError,
           ...(rawError ? { rawError } : {}),
-        } as UIMessage["parts"][number]
+        }
       }
       return part
     }
 
     // Finalize streaming reasoning blocks
-    if (
-      part.type === "reasoning" &&
-      (part as { state?: string }).state === "streaming"
-    ) {
+    if (isReasoningUIPart(part) && part.state === "streaming") {
       return {
         ...part,
         state: "done",
@@ -96,10 +77,7 @@ function finalizeMessageParts(
     }
 
     // Finalize streaming text parts
-    if (
-      part.type === "text" &&
-      (part as { state?: string }).state === "streaming"
-    ) {
+    if (isTextUIPart(part) && part.state === "streaming") {
       return {
         ...part,
         state: "done",
@@ -108,6 +86,73 @@ function finalizeMessageParts(
 
     return part
   })
+}
+
+/**
+ * Extracts the raw prompt string from the first user message,
+ * handling both plain string content and multi-part content arrays.
+ */
+function getInitialPromptText(messages: ModelMessage[]): string {
+  const firstUserMessage = messages.find((m) => m.role === "user")
+  if (!firstUserMessage) return ""
+
+  if (typeof firstUserMessage.content === "string") {
+    return firstUserMessage.content.trim()
+  }
+
+  if (Array.isArray(firstUserMessage.content)) {
+    return firstUserMessage.content
+      .filter(
+        (p): p is { type: "text"; text: string } =>
+          p.type === "text" && typeof p.text === "string"
+      )
+      .map((p) => p.text)
+      .join(" ")
+      .trim()
+  }
+
+  return ""
+}
+
+/**
+ * Generates a game title asynchronously, persists it to the database,
+ * and streams the updated title to the client without blocking the chat turn.
+ */
+async function generateAndPersistGameTitle(
+  chatId: string,
+  promptText: string
+): Promise<void> {
+  try {
+    const generatedTitle = await generateGameTitle(promptText)
+    if (!generatedTitle) return
+
+    await withDbRetry(
+      () =>
+        db
+          .update(games)
+          .set({
+            title: generatedTitle,
+            updatedAt: new Date(),
+          })
+          .where(eq(games.id, chatId)),
+      "onChatStart:updateTitle"
+    )
+
+    chat.response.write({
+      type: "data-game-title",
+      id: "game-title",
+      data: { id: chatId, title: generatedTitle },
+      transient: true,
+    })
+  } catch (err) {
+    Sentry.logger.error(
+      "Failed to generate or save game title in chat session",
+      {
+        chatId,
+        error: err instanceof Error ? err.message : String(err),
+      }
+    )
+  }
 }
 
 export const gameChat = chat.agent({
@@ -194,56 +239,9 @@ export const gameChat = chat.agent({
       transient: true,
     })
 
-    const firstUserMessage = messages.find((m) => m.role === "user")
-    const promptText =
-      typeof firstUserMessage?.content === "string"
-        ? firstUserMessage.content
-        : Array.isArray(firstUserMessage?.content)
-          ? firstUserMessage.content
-              .filter(
-                (p): p is { type: "text"; text: string } =>
-                  p.type === "text" &&
-                  typeof (p as { text?: unknown }).text === "string"
-              )
-              .map((p) => p.text)
-              .join(" ")
-              .trim()
-          : ""
-
+    const promptText = getInitialPromptText(messages)
     if (promptText) {
-      chat.defer(async () => {
-        try {
-          const generatedTitle = await generateGameTitle(promptText)
-          if (generatedTitle) {
-            await withDbRetry(
-              () =>
-                db
-                  .update(games)
-                  .set({
-                    title: generatedTitle,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(games.id, chatId)),
-              "onChatStart:updateTitle"
-            )
-
-            chat.response.write({
-              type: "data-game-title",
-              id: "game-title",
-              data: { id: chatId, title: generatedTitle },
-              transient: true,
-            })
-          }
-        } catch (err) {
-          Sentry.logger.error(
-            "Failed to generate or save game title in chat session",
-            {
-              chatId,
-              error: err instanceof Error ? err.message : String(err),
-            }
-          )
-        }
-      })
+      chat.defer(() => generateAndPersistGameTitle(chatId, promptText))
     }
   },
   onTurnStart: async ({ chatId, clientData }) => {
@@ -417,16 +415,8 @@ export const gameChat = chat.agent({
     const hasContent =
       lastMsg && Array.isArray(lastMsg.parts)
         ? lastMsg.parts.some((p) => {
-            if (p.type === "text")
-              return (
-                typeof (p as { text?: unknown }).text === "string" &&
-                (p as { text: string }).text.trim().length > 0
-              )
-            if (p.type === "reasoning")
-              return (
-                typeof (p as { text?: unknown }).text === "string" &&
-                (p as { text: string }).text.trim().length > 0
-              )
+            if (isTextUIPart(p)) return p.text.trim().length > 0
+            if (isReasoningUIPart(p)) return p.text.trim().length > 0
             return true
           })
         : false
