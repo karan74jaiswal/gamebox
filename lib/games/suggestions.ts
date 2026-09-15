@@ -1,11 +1,11 @@
 import {
-  Pickaxe,
-  Swords,
-  Zap,
-  Plane,
-  Crosshair,
-  Car,
-  Gamepad2,
+  Rocket,
+  Waves,
+  Ghost,
+  CircleDot,
+  Bot,
+  Sparkles,
+  Footprints,
   type LucideIcon,
 } from "lucide-react"
 
@@ -18,48 +18,48 @@ export interface Suggestion {
 export const SUGGESTIONS: Suggestion[][] = [
   [
     {
-      label: "Voxel survival",
+      label: "Synthwave drift racer",
       prompt:
-        "Create a 3D voxel survival gamebox game with procedurally generated terrain, block gathering, tool crafting, and day-night survival cycles.",
-      icon: Pickaxe,
+        "Build a neon-drenched synthwave hover racer with boost pads, drift mechanics, trailing light ribbons, and a pulsating electronic soundtrack.",
+      icon: Rocket,
     },
     {
-      label: "Ink samurai duel",
+      label: "Abyssal submarine",
       prompt:
-        "Build a stylized Japanese ink-wash (sumi-e) samurai duel game featuring timed parries, sword clashes, and cinematic martial arts combat.",
-      icon: Swords,
+        "Create an atmospheric deep-sea submarine exploration game with sonar navigation, bioluminescent creatures, pressure management, and sunken trench mysteries.",
+      icon: Waves,
     },
     {
-      label: "Comic-book firefight",
+      label: "Midnight horde survivor",
       prompt:
-        "Create a cel-shaded comic-book shooter with popping onomatopoeia visual effects, dynamic cover mechanics, and arcade gunplay.",
-      icon: Zap,
+        "Develop a fast-paced gothic horde survival game with auto-firing arcane spells, thousands of swarming skeletons, and screen-clearing upgrade synergies.",
+      icon: Ghost,
     },
     {
-      label: "Realistic battlefield",
+      label: "Pinball crawler",
       prompt:
-        "Design a large-scale tactical battlefield game with combined arms, vehicle transport, destructible environments, and squad objectives.",
-      icon: Plane,
+        "Create a physics-driven pinball roguelike where you launch armored heroes through trap-filled dungeons, hit monster bumpers, and trigger combo score multipliers.",
+      icon: CircleDot,
     },
   ],
   [
     {
-      label: "Fight-first shooter",
+      label: "Orbital mech arena",
       prompt:
-        "Develop a fast-paced retro arena FPS with high-mobility strafe jumping, power weapons, aggressive enemy waves, and a heavy industrial soundtrack aesthetic.",
-      icon: Crosshair,
+        "Design a zero-gravity 3D mech combat simulator with 360-degree thruster vectoring, beam sabers, missile salvos, and floating orbital debris fields.",
+      icon: Bot,
     },
     {
-      label: "Jungle expedition drive",
+      label: "Potion crafting tavern",
       prompt:
-        "Build an off-road 4x4 jungle expedition driving simulator with muddy physics, winch mechanics, river crossings, and lost ruins exploration.",
-      icon: Car,
+        "Build a cozy 3D alchemy shop simulator where you gather magical herbs, stir bubbling cauldrons with realistic fluid physics, and serve mythical patrons.",
+      icon: Sparkles,
     },
     {
-      label: "Sunny kingdom platformer",
+      label: "Rooftop neon parkour",
       prompt:
-        "Create a vibrant 3D platformer set in a floating fantasy kingdom with double-jumps, collectible star coins, bouncy pads, and moving platforms.",
-      icon: Gamepad2,
+        "Create a fluid first-person parkour runner across neon skyscrapers featuring wall-running, grappling lines, slide maneuvers, and momentum-based time dilation.",
+      icon: Footprints,
     },
   ],
 ]
