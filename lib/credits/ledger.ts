@@ -74,3 +74,98 @@ export async function getOrgLedgerEntries(
     throw error
   }
 }
+
+export interface ChargeStepParams {
+  orgId: string
+  stepResponseId: string
+  amount: bigint | number
+}
+
+/**
+ * Charges an organization for an AI generation step.
+ * - Inserts a negative credit_ledger row for that amount in billionths of a dollar (nano-dollars).
+ * - Uses the step's response id as the entry key, so the same step can never be charged twice.
+ * - If amount is passed as a positive number or bigint, it is negated before insertion.
+ */
+export async function chargeStep(
+  params: ChargeStepParams
+): Promise<CreditLedgerEntry | null>
+export async function chargeStep(
+  orgId: string,
+  stepResponseId: string,
+  amount: bigint | number
+): Promise<CreditLedgerEntry | null>
+export async function chargeStep(
+  paramOrOrgId: ChargeStepParams | string,
+  maybeStepResponseId?: string,
+  maybeAmount?: bigint | number
+): Promise<CreditLedgerEntry | null> {
+  let orgId: string
+  let stepResponseId: string
+  let rawAmount: bigint | number
+
+  if (typeof paramOrOrgId === "object" && paramOrOrgId !== null) {
+    orgId = paramOrOrgId.orgId
+    stepResponseId = paramOrOrgId.stepResponseId
+    rawAmount = paramOrOrgId.amount
+  } else {
+    orgId = paramOrOrgId
+    stepResponseId = maybeStepResponseId!
+    rawAmount = maybeAmount!
+  }
+
+  if (!orgId || !stepResponseId) {
+    Sentry.logger.warn(
+      "Skipping chargeStep due to missing orgId or stepResponseId",
+      {
+        orgId,
+        stepResponseId,
+      }
+    )
+    return null
+  }
+
+  const nanoAmount =
+    typeof rawAmount === "number" ? BigInt(Math.round(rawAmount)) : rawAmount
+
+  // Negative amount for charges
+  const negativeAmount =
+    nanoAmount > BigInt(0) ? -nanoAmount : nanoAmount
+
+  try {
+    const [inserted] = await db
+      .insert(creditLedger)
+      .values({
+        orgId,
+        entryKey: stepResponseId,
+        amount: negativeAmount,
+      })
+      .onConflictDoNothing({
+        target: [creditLedger.orgId, creditLedger.entryKey],
+      })
+      .returning()
+
+    if (inserted) {
+      Sentry.logger.info("Successfully charged step to credit ledger", {
+        orgId,
+        stepResponseId,
+        amount: negativeAmount.toString(),
+      })
+    } else {
+      Sentry.logger.info("Step already charged, skipped duplicate entry", {
+        orgId,
+        stepResponseId,
+      })
+    }
+
+    return inserted ?? null
+  } catch (error) {
+    Sentry.logger.error("Failed to charge step to credit ledger", {
+      orgId,
+      stepResponseId,
+      amount: negativeAmount.toString(),
+      error: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  }
+}

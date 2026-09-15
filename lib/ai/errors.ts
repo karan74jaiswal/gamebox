@@ -7,6 +7,9 @@ import {
   LoadAPIKeyError,
   StreamProviderError,
 } from "ai"
+import { OUT_OF_CREDITS_MESSAGE } from "@/lib/credits/constants"
+
+export { OUT_OF_CREDITS_MESSAGE }
 
 export type ErrorCategory =
   | "rate_limit"
@@ -18,6 +21,7 @@ export type ErrorCategory =
   | "sandbox_error"
   | "tool_validation"
   | "tool_execution"
+  | "insufficient_credits"
   | "aborted"
   | "unknown"
 
@@ -361,6 +365,22 @@ export function resolveError(
   // 5. Fallback String Inspection (safety net for raw grpc or non-SDK errors)
   const raw = extractRawMessage(error)
   const lower = raw.toLowerCase()
+
+  if (
+    lower.includes("out_of_credits") ||
+    lower.includes("out of credits") ||
+    lower.includes("insufficient credits") ||
+    lower.includes("no credits")
+  ) {
+    return {
+      userMessage: OUT_OF_CREDITS_MESSAGE,
+      category: "insufficient_credits",
+      errorType: "InsufficientCreditsError",
+      statusCode: 402,
+      code: "INSUFFICIENT_CREDITS",
+      rawMessage: raw,
+    }
+  }
 
   if (
     lower.includes("rate_limit") ||

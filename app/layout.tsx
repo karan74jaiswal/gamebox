@@ -46,7 +46,11 @@ export default function RootLayout({
       )}
     >
       <body>
-        <ClerkProvider appearance={{ theme: shadcn }} ui={ui}>
+        <ClerkProvider
+          appearance={{ theme: shadcn }}
+          ui={ui}
+          afterSignOutUrl="/sign-in"
+        >
           <ThemeProvider>{children}</ThemeProvider>
         </ClerkProvider>
       </body>

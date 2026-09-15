@@ -6,6 +6,7 @@ import { chat, type ChatStartSessionParams } from "@trigger.dev/sdk/ai"
 import * as Sentry from "@sentry/nextjs"
 
 import { getGame } from "@/lib/games/queries"
+import { checkAndSyncOrgCredits, OUT_OF_CREDITS_MESSAGE } from "@/lib/credits"
 import type { gameChat } from "@/trigger/chat"
 
 const startSession = chat.createStartSessionAction<typeof gameChat>("game-chat")
@@ -36,13 +37,33 @@ export async function startChatSession(
     throw new Error("Game not found or unauthorized")
   }
 
+  // Check before session starts
+  const creditCheck = await checkAndSyncOrgCredits(orgId)
+  if (!creditCheck.allowed) {
+    Sentry.logger.info("Blocked chat session start: org is out of credits", {
+      chatId: params.chatId,
+      userId,
+      orgId,
+      balance: creditCheck.balance.toString(),
+      synced: creditCheck.synced,
+    })
+    throw new Error(`OUT_OF_CREDITS: ${OUT_OF_CREDITS_MESSAGE}`)
+  }
+
   try {
     Sentry.logger.info("Starting chat session", {
       chatId: params.chatId,
       userId,
       orgId,
     })
-    return await startSession(params)
+    const sessionParams = {
+      ...params,
+      clientData: {
+        ...params.clientData,
+        orgId,
+      },
+    }
+    return await startSession(sessionParams)
   } catch (error) {
     Sentry.logger.error("Failed to start chat session", {
       chatId: params.chatId,

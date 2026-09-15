@@ -37,6 +37,7 @@ export interface ChatComposerProps {
   ) => void | Promise<void>
 
   disabled?: boolean
+  isOutOfCredits?: boolean
   status?: string
   onStop?: () => void
   onCancel?: () => void
@@ -52,6 +53,7 @@ export function ChatComposer({
   className,
   sendMessage,
   disabled = false,
+  isOutOfCredits = false,
   status,
   onStop,
   onCancel,
@@ -93,9 +95,12 @@ export function ChatComposer({
     onChange?.(newValue)
   }
 
+  const isInputDisabled = disabled || isOutOfCredits
+  const activePlaceholder = isOutOfCredits ? "Out of credits" : placeholder
+
   const handleSubmit = () => {
     const content = currentValue.trim()
-    if (!content || isPending || isStreaming || disabled) return
+    if (!content || isPending || isStreaming || isInputDisabled) return
 
     startTransition(async () => {
       try {
@@ -136,19 +141,19 @@ export function ChatComposer({
         <InputGroupTextarea
           className="field-sizing-content max-h-48 min-h-10"
           rows={1}
-          placeholder={placeholder}
+          placeholder={activePlaceholder}
           value={currentValue}
           onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
-              if (!isStreaming && !disabled && !isPending) handleSubmit()
+              if (!isStreaming && !isInputDisabled && !isPending) handleSubmit()
             } else if (e.key === "Escape" && isStreaming && handleCancel) {
               e.preventDefault()
               handleCancel()
             }
           }}
-          disabled={isPending || disabled}
+          disabled={isPending || isInputDisabled}
         />
         <InputGroupAddon align="block-end" className="justify-between">
           <DropdownMenu>
@@ -205,7 +210,7 @@ export function ChatComposer({
               size="icon-sm"
               variant="default"
               className="rounded-full"
-              disabled={!currentValue.trim() || isPending || disabled}
+              disabled={!currentValue.trim() || isPending || isInputDisabled}
               onClick={handleSubmit}
             >
               <ArrowUp />

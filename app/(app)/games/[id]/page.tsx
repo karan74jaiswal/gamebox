@@ -6,6 +6,7 @@ import * as Sentry from "@sentry/nextjs"
 import { GameChat } from "@/components/game-chat"
 import { getGame } from "@/lib/games/queries"
 import { mintChatAccessToken } from "@/app/actions"
+import { checkAndSyncOrgCredits } from "@/lib/credits"
 
 interface GamePageProps {
   params: Promise<{
@@ -45,10 +46,23 @@ export default async function GamePage({
     }
   }
 
+  let initialIsOutOfCredits = false
+  try {
+    const creditCheck = await checkAndSyncOrgCredits(game.orgId)
+    initialIsOutOfCredits = !creditCheck.allowed
+  } catch (error) {
+    Sentry.logger.error("Failed to check initial org credits on game page", {
+      gameId: id,
+      orgId: game.orgId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+
   Sentry.logger.info("Game page loaded", {
     gameId: id,
     hasSandbox: Boolean(game.sandboxId),
     messageCount: initialMessages.length,
+    initialIsOutOfCredits,
   })
 
   return (
@@ -56,12 +70,14 @@ export default async function GamePage({
       <GameChat
         key={id}
         id={id}
+        orgId={game.orgId}
         initialMessages={initialMessages}
         initialPrompt={prompt}
         initialModel={initialModel}
         initialLastEventId={game.lastEventId ?? undefined}
         initialPublicAccessToken={initialPublicAccessToken}
         initialSandboxId={game.sandboxId}
+        initialIsOutOfCredits={initialIsOutOfCredits}
       />
     </div>
   )

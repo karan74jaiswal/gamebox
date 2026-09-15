@@ -29,9 +29,10 @@ import {
   type ErrorCategory,
   isAbortError,
   extractRawMessage,
+  OUT_OF_CREDITS_MESSAGE,
 } from "./errors"
 
-export { type ResolvedError, type ErrorCategory }
+export { type ResolvedError, type ErrorCategory, OUT_OF_CREDITS_MESSAGE }
 export const resolveError = resolveServerError
 
 /**
@@ -437,6 +438,22 @@ export function resolveServerError(
   // 6. Fallback String Inspection (safety net for raw grpc or non-SDK errors)
   const raw = extractRawMessage(error)
   const lower = raw.toLowerCase()
+
+  if (
+    lower.includes("out_of_credits") ||
+    lower.includes("out of credits") ||
+    lower.includes("insufficient credits") ||
+    lower.includes("no credits")
+  ) {
+    return {
+      userMessage: OUT_OF_CREDITS_MESSAGE,
+      category: "insufficient_credits",
+      errorType: "InsufficientCreditsError",
+      statusCode: 402,
+      code: "INSUFFICIENT_CREDITS",
+      rawMessage: raw,
+    }
+  }
 
   if (
     lower.includes("rate_limit") ||

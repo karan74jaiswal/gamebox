@@ -9,57 +9,20 @@ import { getLanguageModel } from "@/lib/ai/provider"
 import { sanitizeContext, sanitizeStep } from "@/lib/ai/sanitizer"
 import { isAbortError, type ResolvedError } from "@/lib/ai/errors"
 import { resolveError } from "@/lib/ai/errors.server"
+import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
+import { chargeStep, getFormattedOrgBalance } from "@/lib/credits/ledger"
+import { calculateStepAmount } from "@/lib/credits/pricing"
+import { checkAndSyncOrgCredits, OUT_OF_CREDITS_MESSAGE } from "@/lib/credits"
 import { generateGameTitle } from "@/lib/games/title"
 import { instructions } from "@/lib/games/instructions"
-import { db, games } from "@/lib/db"
+import { db, games, withDbRetry } from "@/lib/db"
 import { getGameSandbox } from "@/lib/daytona/utils"
 import { tools, setGameChatContext } from "@/lib/games/tools"
 
 const streamErrorKey = locals.create<string>("game-chat.streamError")
 const rawStreamErrorKey = locals.create<string>("game-chat.rawStreamError")
 const resolvedErrorKey = locals.create<ResolvedError>("game-chat.resolvedError")
-
-/**
- * Executes a database operation with exponential backoff retry and full cause logging.
- * Prevents transient Neon serverless wake-up or connection timeouts from aborting active chat turns.
- */
-async function withDbRetry<T>(
-  operation: () => Promise<T>,
-  context: string,
-  retries = 3,
-  delayMs = 500
-): Promise<T> {
-  let attempt = 0
-  while (true) {
-    try {
-      return await operation()
-    } catch (err: unknown) {
-      attempt++
-      const errMsg = err instanceof Error ? err.message : String(err)
-      if (attempt >= retries) {
-        Sentry.logger.error(
-          "Database operation failed after all retries in chat",
-          {
-            context,
-            attempt,
-            maxRetries: retries,
-            error: errMsg,
-          }
-        )
-        throw err
-      }
-      Sentry.logger.warn("Database operation retry in chat", {
-        context,
-        attempt,
-        maxRetries: retries,
-        error: errMsg,
-      })
-      await new Promise((res) =>
-        setTimeout(res, delayMs * Math.pow(2, attempt - 1))
-      )
-    }
-  }
-}
+const orgIdKey = locals.create<string>("game-chat.orgId")
 
 function finalizeMessageParts(
   parts?: UIMessage["parts"],
@@ -153,8 +116,39 @@ export const gameChat = chat.agent({
   clientDataSchema: z.object({
     model: z.string().optional(),
     provider: z.string().optional(),
+    orgId: z.string().optional(),
   }),
-  hydrateMessages: async ({ chatId, trigger, incomingMessages }) => {
+  hydrateMessages: async ({
+    chatId,
+    trigger,
+    incomingMessages,
+    clientData,
+  }) => {
+    const orgId = clientData?.orgId || locals.get(orgIdKey)
+    if (!orgId) {
+      throw new Error(
+        `Cannot run chat turn: Missing organization ID for game ${chatId}`
+      )
+    }
+
+    locals.set(orgIdKey, orgId)
+    const creditCheck = await checkAndSyncOrgCredits(orgId)
+    if (!creditCheck.allowed) {
+      logger.warn(
+        `==================== [TURN BLOCKED: OUT OF CREDITS] (Chat: ${chatId} | Org: ${orgId} | Balance: ${creditCheck.balance.toString()} nano-dollars) ====================`
+      )
+      Sentry.logger.info(
+        "Game chat turn blocked in hydrateMessages: org out of credits",
+        {
+          chatId,
+          orgId,
+          balance: creditCheck.balance.toString(),
+          synced: creditCheck.synced,
+        }
+      )
+      throw new Error(`OUT_OF_CREDITS: ${OUT_OF_CREDITS_MESSAGE}`)
+    }
+
     const [record] = await withDbRetry(
       () =>
         db
@@ -252,13 +246,23 @@ export const gameChat = chat.agent({
       })
     }
   },
-  onTurnStart: async ({ chatId }) => {
+  onTurnStart: async ({ chatId, clientData }) => {
     locals.set(streamErrorKey, undefined)
     locals.set(rawStreamErrorKey, undefined)
     locals.set(resolvedErrorKey, undefined)
     setGameChatContext(chatId)
-    Sentry.logger.info("Game chat turn started", { chatId })
+
+    const orgId = clientData?.orgId || locals.get(orgIdKey)
+    if (orgId) {
+      locals.set(orgIdKey, orgId)
+    }
+
+    Sentry.logger.info("Game chat turn started", {
+      chatId,
+      orgId: locals.get(orgIdKey),
+    })
   },
+
   onBeforeTurnComplete: async ({
     writer,
     chatId,
@@ -296,7 +300,6 @@ export const gameChat = chat.agent({
   },
   uiMessageStreamOptions: {
     sendReasoning: true,
-
     onError: (error) => {
       if (isAbortError(error) || chat.isStopped()) {
         locals.set(streamErrorKey, undefined)
@@ -526,11 +529,35 @@ export const gameChat = chat.agent({
       messageCount: finalMessages.length,
     })
   },
+
   run: async ({ messages, tools, signal, clientData, chatId }) => {
     setGameChatContext(chatId)
 
+    const orgId = clientData?.orgId || locals.get(orgIdKey)
+    if (!orgId) {
+      throw new Error(
+        `Cannot run chat turn: Missing organization ID for game ${chatId}`
+      )
+    }
+    // Avoiding this check, bcz already doing in hydrateMessages
+    // Check before every turn after session starts
+    // const creditCheck = await checkAndSyncOrgCredits(orgId)
+    // if (!creditCheck.allowed) {
+    //   logger.warn(
+    //     `==================== [TURN BLOCKED: OUT OF CREDITS] (Chat: ${chatId} | Org: ${orgId} | Balance: ${creditCheck.balance.toString()} nano-dollars) ====================`
+    //   )
+    //   Sentry.logger.info("Game chat turn blocked: org out of credits", {
+    //     chatId,
+    //     orgId,
+    //     balance: creditCheck.balance.toString(),
+    //     synced: creditCheck.synced,
+    //   })
+    //   throw new Error(`OUT_OF_CREDITS: ${OUT_OF_CREDITS_MESSAGE}`)
+    // }
+
     Sentry.logger.info("Game chat model stream initiated", {
       chatId,
+      orgId,
       messageCount: messages.length,
       model: clientData?.model || "default",
       provider: clientData?.provider || "default",
@@ -557,11 +584,11 @@ export const gameChat = chat.agent({
       messages: sanitizedMessages,
       abortSignal: signal,
 
-      stopWhen: stepCountIs(50),
+      stopWhen: stepCountIs(100),
       maxRetries: 4,
 
       prepareStep: async ({ messages: stepMessages, steps }) => {
-        const sanitized = sanitizeStep(stepMessages, { windowSteps: 20 })
+        const sanitized = sanitizeStep(stepMessages, { windowSteps: 25 })
         const stepNum = steps.length + 1
 
         logger.info(
@@ -576,6 +603,65 @@ export const gameChat = chat.agent({
 
         return {
           messages: sanitized,
+        }
+      },
+
+      onStepFinish: async (step) => {
+        const stepResponseId = step.response?.id
+        if (!stepResponseId) {
+          logger.warn("Step has no response id, skipping credit charge", {
+            stepNumber: step.stepNumber,
+          })
+          return
+        }
+
+        const modelId =
+          clientData?.model || step.model?.modelId || DEFAULT_MODEL_ID
+        const stepAmount = calculateStepAmount(step, modelId)
+        if (stepAmount <= BigInt(0)) {
+          return
+        }
+
+        try {
+          await withDbRetry(
+            () =>
+              chargeStep({
+                orgId,
+                stepResponseId,
+                amount: stepAmount,
+              }),
+            "onStepFinish:chargeStep"
+          )
+
+          const formattedBalance = await getFormattedOrgBalance(orgId)
+
+          chat.response.write({
+            type: "data-credits",
+            id: "credits-update",
+            data: {
+              credits: formattedBalance,
+              stepResponseId,
+              amount: stepAmount.toString(),
+            },
+            transient: true,
+          })
+
+          logger.info(
+            `Charged step ${step.stepNumber + 1} (${stepResponseId}): cost = ${stepAmount.toString()} nano-dollars, new balance = ${formattedBalance}`
+          )
+        } catch (chargeErr) {
+          Sentry.logger.error("Failed to charge step in game chat", {
+            chatId,
+            orgId,
+            stepResponseId,
+            error:
+              chargeErr instanceof Error
+                ? chargeErr.message
+                : String(chargeErr),
+          })
+          logger.error("Failed to charge step in game chat", {
+            error: chargeErr,
+          })
         }
       },
 

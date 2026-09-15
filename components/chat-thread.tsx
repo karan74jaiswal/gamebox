@@ -1,6 +1,9 @@
 "use client"
 
 import * as React from "react"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { AlertCircle } from "lucide-react"
 import { useChat } from "@ai-sdk/react"
 import {
   isToolUIPart,
@@ -13,8 +16,14 @@ import { useTriggerChatTransport } from "@trigger.dev/sdk/chat/react"
 
 import type { gameChat } from "@/trigger/chat"
 import { mintChatAccessToken, startChatSession } from "@/app/actions"
+import { saveGameMessages } from "@/lib/games/actions"
 import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
-import { isAbortError, sanitizeErrorMessage } from "@/lib/ai/errors"
+import {
+  isAbortError,
+  sanitizeErrorMessage,
+  resolveError,
+  OUT_OF_CREDITS_MESSAGE,
+} from "@/lib/ai/errors"
 import * as Sentry from "@sentry/nextjs"
 
 import {
@@ -60,28 +69,58 @@ export {
 
 export interface ChatThreadProps {
   id?: string
+  orgId?: string
   className?: string
   initialMessages?: UIMessage[]
   initialPrompt?: string
   initialModel?: string
   initialLastEventId?: string
   initialPublicAccessToken?: string
+  initialIsOutOfCredits?: boolean
   onSandboxReady?: (sandboxId: string) => void
 }
 
 export function ChatThread({
   id,
+  orgId,
   className,
   initialMessages,
   initialPrompt,
   initialModel,
   initialLastEventId,
   initialPublicAccessToken,
+  initialIsOutOfCredits = false,
   onSandboxReady,
 }: ChatThreadProps) {
+  const router = useRouter()
   const [selectedModel, setSelectedModel] = React.useState<string>(
     initialModel || DEFAULT_MODEL_ID
   )
+  const [isOutOfCredits, setIsOutOfCredits] = React.useState(
+    Boolean(initialIsOutOfCredits)
+  )
+
+  React.useEffect(() => {
+    if (initialIsOutOfCredits !== undefined) {
+      setIsOutOfCredits(initialIsOutOfCredits)
+    }
+  }, [initialIsOutOfCredits])
+
+  React.useEffect(() => {
+    const handleCreditsUpdate = (e: Event) => {
+      const detail = (e as CustomEvent<{ credits?: string }>).detail
+      if (detail?.credits) {
+        const numericValue = parseFloat(detail.credits.replace(/[^0-9.-]/g, ""))
+        if (!isNaN(numericValue) && numericValue > 0) {
+          setIsOutOfCredits(false)
+        }
+      }
+    }
+    window.addEventListener("credits-updated", handleCreditsUpdate)
+    return () => {
+      window.removeEventListener("credits-updated", handleCreditsUpdate)
+    }
+  }, [])
 
   const [isInitialPromptStopped, setIsInitialPromptStopped] =
     React.useState(false)
@@ -99,9 +138,16 @@ export function ChatThread({
     task: "game-chat",
     accessToken: ({ chatId }) => mintChatAccessToken(chatId),
     startSession: ({ chatId, clientData }) =>
-      startChatSession({ chatId, clientData }),
+      startChatSession({
+        chatId,
+        clientData: {
+          ...clientData,
+          orgId,
+        },
+      }),
     clientData: {
       model: selectedModel,
+      orgId,
     },
     sessions:
       id &&
@@ -155,6 +201,15 @@ export function ChatThread({
         chatId: id || "unknown",
         error: err.message,
       })
+
+      const resolved = resolveError(err)
+      if (
+        resolved.category === "insufficient_credits" ||
+        err.message?.includes("OUT_OF_CREDITS")
+      ) {
+        setIsOutOfCredits(true)
+        clearError()
+      }
     },
     onFinish: () => {
       Sentry.logger.info("Client chat turn finished", {
@@ -170,9 +225,24 @@ export function ChatThread({
           })
         )
       }
+      router.refresh()
     },
     onData: (dataPart) => {
       const part = dataPart as { type?: string; data?: unknown }
+      if (
+        part.type === "data-credits" &&
+        typeof part.data === "object" &&
+        part.data !== null
+      ) {
+        const payload = part.data as { credits?: string }
+        if (payload.credits) {
+          window.dispatchEvent(
+            new CustomEvent("credits-updated", {
+              detail: { credits: payload.credits },
+            })
+          )
+        }
+      }
       if (
         part.type === "data-game-title" &&
         typeof part.data === "object" &&
@@ -345,6 +415,22 @@ export function ChatThread({
         )
       }
 
+      if (!orgId) {
+        return
+      }
+
+      if (initialIsOutOfCredits) {
+        setIsOutOfCredits(true)
+        setMessages([
+          {
+            id: `prompt-${Date.now()}`,
+            role: "user",
+            parts: [{ type: "text", text: initialPrompt }],
+          },
+        ])
+        return
+      }
+
       const modelToUse = selectedModelRef.current
 
       sendMessage(
@@ -352,10 +438,12 @@ export function ChatThread({
         {
           metadata: {
             model: modelToUse,
+            orgId,
           },
           body: {
             id,
             model: modelToUse,
+            orgId,
           },
         }
       )
@@ -382,7 +470,7 @@ export function ChatThread({
   }, [messages, error])
 
   const handleSendMessage = (value: string, options?: { model?: string }) => {
-    if (isWaitingForPlayerAnswer) {
+    if (!orgId || isWaitingForPlayerAnswer || isOutOfCredits) {
       return
     }
 
@@ -439,10 +527,12 @@ export function ChatThread({
       {
         metadata: {
           model: modelToUse,
+          orgId,
         },
         body: {
           id,
           model: modelToUse,
+          orgId,
         },
       }
     )
@@ -461,15 +551,17 @@ export function ChatThread({
         options: {
           metadata: {
             model: modelToUse,
+            orgId,
           },
           body: {
             id,
             model: modelToUse,
+            orgId,
           },
         },
       })
     },
-    [addToolOutput, id]
+    [addToolOutput, id, orgId]
   )
 
   const isGenerating =
@@ -529,6 +621,7 @@ export function ChatThread({
                   const lastMessage = messages[messages.length - 1]
                   const isWaitingForFirstToken =
                     !error &&
+                    !isOutOfCredits &&
                     (isSubmittingInitialPrompt ||
                       status === "submitted" ||
                       (status === "streaming" &&
@@ -555,15 +648,41 @@ export function ChatThread({
       </div>
 
       <div className="mx-auto w-full max-w-3xl p-4">
+        {isOutOfCredits && (
+          <div className="mb-3 rounded-2xl border border-white/10 bg-zinc-900/90 p-4 shadow-lg backdrop-blur">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="mt-0.5 size-5 shrink-0 text-white/80" />
+              <div className="flex flex-col gap-1">
+                <h4 className="text-sm font-semibold text-white">Out of credits</h4>
+                <p className="text-xs leading-relaxed text-zinc-400">
+                  Building a game spends credits, and this organization has none left.{" "}
+                  <Link
+                    href="/billing"
+                    className="font-medium text-zinc-200 underline underline-offset-4 hover:text-white"
+                  >
+                    Add more from the billing page
+                  </Link>{" "}
+                  to pick this game back up.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <ChatComposer
           placeholder={
-            isWaitingForPlayerAnswer
-              ? "Please choose an option in the questionnaire above to continue..."
-              : "Ask a follow up or describe changes..."
+            !orgId
+              ? "Select an organization to continue"
+              : isOutOfCredits
+                ? "Out of credits"
+                : isWaitingForPlayerAnswer
+                  ? "Please choose an option in the questionnaire above to continue..."
+                  : "Ask a follow up or describe changes..."
           }
-          disabled={isWaitingForPlayerAnswer}
+          disabled={!orgId || isWaitingForPlayerAnswer || isOutOfCredits}
+          isOutOfCredits={isOutOfCredits}
           sendMessage={handleSendMessage}
-          status={isSubmittingInitialPrompt ? "submitted" : status}
+          status={isSubmittingInitialPrompt && !isOutOfCredits ? "submitted" : status}
           onStop={handleStop}
           onCancel={handleStop}
           model={selectedModel}
