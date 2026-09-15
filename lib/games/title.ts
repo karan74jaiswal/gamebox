@@ -1,7 +1,33 @@
-import { generateText } from "ai"
+import { generateText, type ModelMessage } from "ai"
 import * as Sentry from "@sentry/nextjs"
 
 import { getLanguageModel } from "@/lib/ai/provider"
+
+/**
+ * Extracts the raw prompt string from the first user message,
+ * handling both plain string content and multi-part content arrays.
+ */
+export function getInitialPromptText(messages: ModelMessage[]): string {
+  const firstUserMessage = messages.find((m) => m.role === "user")
+  if (!firstUserMessage) return ""
+
+  if (typeof firstUserMessage.content === "string") {
+    return firstUserMessage.content.trim()
+  }
+
+  if (Array.isArray(firstUserMessage.content)) {
+    return firstUserMessage.content
+      .filter(
+        (p): p is { type: "text"; text: string } =>
+          p.type === "text" && typeof p.text === "string"
+      )
+      .map((p) => p.text)
+      .join(" ")
+      .trim()
+  }
+
+  return ""
+}
 
 /**
  * Generates a concise, catchy game title (2 to 5 words) based on the game description.
