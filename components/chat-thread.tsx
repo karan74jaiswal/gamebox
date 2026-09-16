@@ -134,7 +134,7 @@ export function ChatThread({
     initialLastEventId
   )
 
-  const transport = useTriggerChatTransport<typeof gameChat>({
+  const baseTransport = useTriggerChatTransport<typeof gameChat>({
     task: "game-chat",
     accessToken: ({ chatId }) => mintChatAccessToken(chatId),
     startSession: ({ chatId, clientData }) =>
@@ -158,7 +158,6 @@ export function ChatThread({
             [id]: {
               publicAccessToken: initialPublicAccessToken,
               lastEventId: initialLastEventId,
-              isStreaming: false,
             },
           }
         : undefined,
@@ -172,6 +171,36 @@ export function ChatThread({
       }
     },
   })
+
+  // Patch reconnectToStream to safely handle React Strict Mode remounts in Next.js dev.
+  // In dev mode, React unmounts and remounts components on load. Trigger's reconnectToStream
+  // returns null if activeStreams.has(chatId). Because Mount 1's abort teardown is async,
+  // Mount 2 sees activeStreams.has(chatId) === true and drops the stream.
+  // Aborting and removing any stale controller allows Mount 2 to attach to the live SSE stream.
+  const transport = React.useMemo(() => {
+    const transportInstance = baseTransport as unknown as {
+      __reconnectPatched?: boolean
+      activeStreams?: Map<string, AbortController>
+      reconnectToStream: typeof baseTransport.reconnectToStream
+    }
+
+    if (!transportInstance.__reconnectPatched) {
+      transportInstance.__reconnectPatched = true
+      const originalReconnect =
+        baseTransport.reconnectToStream.bind(baseTransport)
+
+      baseTransport.reconnectToStream = async (options) => {
+        const existing = transportInstance.activeStreams?.get(options.chatId)
+        if (existing) {
+          existing.abort()
+          transportInstance.activeStreams?.delete(options.chatId)
+        }
+        return originalReconnect(options)
+      }
+    }
+
+    return baseTransport
+  }, [baseTransport])
 
   const refreshedToolCallsRef = React.useRef<Set<string>>(new Set())
   const refreshDebounceTimerRef = React.useRef<NodeJS.Timeout | null>(null)
@@ -636,9 +665,16 @@ export function ChatThread({
                   !(
                     messages.length > 0 &&
                     messages[messages.length - 1]?.role === "assistant" &&
-                    (messages[messages.length - 1]?.metadata as { isError?: boolean })?.isError
+                    (
+                      messages[messages.length - 1]?.metadata as {
+                        isError?: boolean
+                      }
+                    )?.isError
                   ) && (
-                    <ChatErrorMessage error={error} isGenerating={isGenerating} />
+                    <ChatErrorMessage
+                      error={error}
+                      isGenerating={isGenerating}
+                    />
                   )}
               </MessageScrollerContent>
             </MessageScrollerViewport>
@@ -653,9 +689,12 @@ export function ChatThread({
             <div className="flex items-start gap-3">
               <AlertCircle className="mt-0.5 size-5 shrink-0 text-white/80" />
               <div className="flex flex-col gap-1">
-                <h4 className="text-sm font-semibold text-white">Out of credits</h4>
+                <h4 className="text-sm font-semibold text-white">
+                  Out of credits
+                </h4>
                 <p className="text-xs leading-relaxed text-zinc-400">
-                  Building a game spends credits, and this organization has none left.{" "}
+                  Building a game spends credits, and this organization has none
+                  left.{" "}
                   <Link
                     href="/billing"
                     className="font-medium text-zinc-200 underline underline-offset-4 hover:text-white"
@@ -682,7 +721,9 @@ export function ChatThread({
           disabled={!orgId || isWaitingForPlayerAnswer || isOutOfCredits}
           isOutOfCredits={isOutOfCredits}
           sendMessage={handleSendMessage}
-          status={isSubmittingInitialPrompt && !isOutOfCredits ? "submitted" : status}
+          status={
+            isSubmittingInitialPrompt && !isOutOfCredits ? "submitted" : status
+          }
           onStop={handleStop}
           onCancel={handleStop}
           model={selectedModel}
