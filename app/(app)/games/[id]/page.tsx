@@ -38,8 +38,14 @@ export default async function GamePage({
   const initialMessages: UIMessage[] = (game.messages as UIMessage[]) ?? []
   const initialModel = model || game.model || undefined
 
+  const lastMessage =
+    initialMessages.length > 0
+      ? initialMessages[initialMessages.length - 1]
+      : undefined
+  const hasIncompleteTurn = lastMessage?.role === "user"
+
   let initialPublicAccessToken: string | undefined
-  if (initialMessages.length > 0) {
+  if (hasIncompleteTurn) {
     try {
       initialPublicAccessToken = await mintChatAccessToken(id)
     } catch (error) {

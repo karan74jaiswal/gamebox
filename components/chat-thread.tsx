@@ -134,6 +134,12 @@ export function ChatThread({
     initialLastEventId
   )
 
+  const lastInitialMessage =
+    initialMessages && initialMessages.length > 0
+      ? initialMessages[initialMessages.length - 1]
+      : undefined
+  const hasIncompleteTurn = lastInitialMessage?.role === "user"
+
   const baseTransport = useTriggerChatTransport<typeof gameChat>({
     task: "game-chat",
     accessToken: ({ chatId }) => mintChatAccessToken(chatId),
@@ -151,13 +157,13 @@ export function ChatThread({
     },
     sessions:
       id &&
-      initialMessages &&
-      initialMessages.length > 0 &&
+      hasIncompleteTurn &&
       initialPublicAccessToken
         ? {
             [id]: {
               publicAccessToken: initialPublicAccessToken,
               lastEventId: initialLastEventId,
+              isStreaming: true,
             },
           }
         : undefined,
@@ -224,7 +230,7 @@ export function ChatThread({
     messages: initialMessages,
     transport,
     sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    resume: Boolean(initialMessages && initialMessages.length > 0),
+    resume: hasIncompleteTurn,
     onError: (err) => {
       Sentry.logger.error("Client chat turn error", {
         chatId: id || "unknown",
