@@ -1,8 +1,8 @@
-import { createRequire } from "node:module"
-import { join } from "node:path"
-
 import { defineConfig } from "@trigger.dev/sdk"
-import { additionalFiles } from "@trigger.dev/build/extensions/core"
+import {
+  additionalFiles,
+  additionalPackages,
+} from "@trigger.dev/build/extensions/core"
 import {
   esbuildPlugin,
   type BuildExtension,
@@ -17,12 +17,10 @@ import { sentryEsbuildPlugin } from "@sentry/esbuild-plugin"
 // 'form-data'`. Leaving the package out of the bundle and installing it in the
 // deployment instead puts a real `node_modules` back under those requires.
 //
-// `build.external` is the documented way to do that and does not work here: the
-// CLI marks a package external only after reading a name out of the nearest
-// package.json to the resolved entry point, and for this SDK that is
-// `@daytona/sdk/cjs/package.json` — a two-line `{"type": "commonjs"}` with no
-// name — so the entry is dropped without a word and the package is bundled
-// anyway. Hence the plugin below, which does the same job by hand.
+// `build.external` is the documented way to do that but the Trigger CLI's
+// external resolution gets tripped up by `@daytona/sdk/cjs/package.json` having
+// no "name" field and silently bundles it anyway. The plugin below marks it
+// external directly in esbuild, while `additionalPackages` installs it into the image.
 const daytonaExternal: BuildExtension = {
   name: "daytona-external",
   onBuildStart(context) {
@@ -44,18 +42,6 @@ const daytonaExternal: BuildExtension = {
       },
       { placement: "first", target: "deploy" }
     )
-
-    // An external is only half the fix — something has to install it. The
-    // version is read from the installed package rather than pinned here so a
-    // bump in package.json cannot silently deploy an older SDK than the one
-    // this was typechecked against.
-    const require = createRequire(join(context.workingDir, "package.json"))
-    const { version } = require("@daytona/sdk/package.json")
-
-    context.addLayer({
-      id: "daytona-external",
-      dependencies: { "@daytona/sdk": version },
-    })
   },
 }
 
@@ -84,6 +70,9 @@ export default defineConfig({
     keepNames: true,
     extensions: [
       daytonaExternal,
+      additionalPackages({
+        packages: ["@daytona/sdk"],
+      }),
       additionalFiles({
         files: ["./lib/games/runtime/**"],
       }),

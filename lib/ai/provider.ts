@@ -13,6 +13,22 @@ let vertexInstance: ReturnType<typeof createVertex> | null = null
 let vertexAnthropicInstance: ReturnType<typeof createVertexAnthropic> | null = null
 let vertexXaiInstance: ReturnType<typeof createGoogleVertexXai> | null = null
 
+function formatPrivateKey(key: string): string {
+  let cleaned = key.trim()
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"')) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'"))
+  ) {
+    cleaned = cleaned.slice(1, -1).trim()
+  }
+  if (cleaned.startsWith('\\"') && cleaned.endsWith('\\"')) {
+    cleaned = cleaned.slice(2, -2).trim()
+  }
+  cleaned = cleaned.replace(/\\+n/g, "\n")
+  cleaned = cleaned.replace(/\r/g, "")
+  return cleaned.trim()
+}
+
 function getVertexAuthOptions() {
   if (
     process.env.GOOGLE_VERTEX_PRIVATE_KEY &&
@@ -20,11 +36,8 @@ function getVertexAuthOptions() {
   ) {
     return {
       credentials: {
-        client_email: process.env.GOOGLE_VERTEX_CLIENT_EMAIL,
-        private_key: process.env.GOOGLE_VERTEX_PRIVATE_KEY.replace(
-          /\\n/g,
-          "\n"
-        ),
+        client_email: process.env.GOOGLE_VERTEX_CLIENT_EMAIL.trim(),
+        private_key: formatPrivateKey(process.env.GOOGLE_VERTEX_PRIVATE_KEY),
       },
     }
   }
