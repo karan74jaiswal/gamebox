@@ -60,7 +60,20 @@ function ThemeHotkey() {
         return
       }
 
-      setTheme(resolvedTheme === "dark" ? "light" : "dark")
+      const nextTheme = resolvedTheme === "dark" ? "light" : "dark"
+
+      if (
+        typeof document === "undefined" ||
+        !("startViewTransition" in document) ||
+        window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ) {
+        setTheme(nextTheme)
+        return
+      }
+
+      document.startViewTransition(() => {
+        setTheme(nextTheme)
+      })
     }
 
     window.addEventListener("keydown", onKeyDown)
@@ -71,6 +84,29 @@ function ThemeHotkey() {
   }, [resolvedTheme, setTheme])
 
   return null
+}
+
+export function useThemeToggle() {
+  const { resolvedTheme, setTheme } = useTheme()
+
+  const toggleTheme = React.useCallback(() => {
+    const nextTheme = resolvedTheme === "dark" ? "light" : "dark"
+
+    if (
+      typeof document === "undefined" ||
+      !("startViewTransition" in document) ||
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      setTheme(nextTheme)
+      return
+    }
+
+    document.startViewTransition(() => {
+      setTheme(nextTheme)
+    })
+  }, [resolvedTheme, setTheme])
+
+  return { toggleTheme, resolvedTheme }
 }
 
 export { ThemeProvider }

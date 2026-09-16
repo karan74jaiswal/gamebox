@@ -30,6 +30,20 @@ function formatPrivateKey(key: string): string {
 }
 
 function getVertexAuthOptions() {
+  if (process.env.GOOGLE_CREDENTIALS_BASE64) {
+    try {
+      const credentials = JSON.parse(
+        Buffer.from(
+          process.env.GOOGLE_CREDENTIALS_BASE64,
+          "base64"
+        ).toString("utf8")
+      )
+      return { credentials }
+    } catch (err) {
+      console.error("Failed to parse GOOGLE_CREDENTIALS_BASE64:", err)
+    }
+  }
+
   if (
     process.env.GOOGLE_VERTEX_PRIVATE_KEY &&
     process.env.GOOGLE_VERTEX_CLIENT_EMAIL
@@ -46,6 +60,7 @@ function getVertexAuthOptions() {
 
 function hasVertexCredentials(): boolean {
   return Boolean(
+    process.env.GOOGLE_CREDENTIALS_BASE64 ||
     process.env.GOOGLE_APPLICATION_CREDENTIALS ||
     process.env.GOOGLE_VERTEX_PROJECT ||
     process.env.GOOGLE_VERTEX_CLIENT_EMAIL
@@ -55,10 +70,13 @@ function hasVertexCredentials(): boolean {
 function getVertex(): ReturnType<typeof createVertex> {
   if (vertexInstance) return vertexInstance
 
-  const project =
-    process.env.GOOGLE_VERTEX_PROJECT || "gen-lang-client-0841656997"
-  const location = process.env.GOOGLE_VERTEX_LOCATION || "global"
   const googleAuthOptions = getVertexAuthOptions()
+  const project =
+    (googleAuthOptions?.credentials as { project_id?: string } | undefined)
+      ?.project_id ||
+    process.env.GOOGLE_VERTEX_PROJECT ||
+    "gen-lang-client-0841656997"
+  const location = process.env.GOOGLE_VERTEX_LOCATION || "global"
 
   vertexInstance = createVertex({
     project,
@@ -72,10 +90,13 @@ function getVertex(): ReturnType<typeof createVertex> {
 function getVertexAnthropic(): ReturnType<typeof createVertexAnthropic> {
   if (vertexAnthropicInstance) return vertexAnthropicInstance
 
-  const project =
-    process.env.GOOGLE_VERTEX_PROJECT || "gen-lang-client-0841656997"
-  const location = process.env.GOOGLE_VERTEX_LOCATION || "global"
   const googleAuthOptions = getVertexAuthOptions()
+  const project =
+    (googleAuthOptions?.credentials as { project_id?: string } | undefined)
+      ?.project_id ||
+    process.env.GOOGLE_VERTEX_PROJECT ||
+    "gen-lang-client-0841656997"
+  const location = process.env.GOOGLE_VERTEX_LOCATION || "global"
 
   vertexAnthropicInstance = createVertexAnthropic({
     project,
@@ -89,10 +110,13 @@ function getVertexAnthropic(): ReturnType<typeof createVertexAnthropic> {
 function getVertexXai(): ReturnType<typeof createGoogleVertexXai> {
   if (vertexXaiInstance) return vertexXaiInstance
 
-  const project =
-    process.env.GOOGLE_VERTEX_PROJECT || "gen-lang-client-0841656997"
-  const location = process.env.GOOGLE_VERTEX_LOCATION || "global"
   const googleAuthOptions = getVertexAuthOptions()
+  const project =
+    (googleAuthOptions?.credentials as { project_id?: string } | undefined)
+      ?.project_id ||
+    process.env.GOOGLE_VERTEX_PROJECT ||
+    "gen-lang-client-0841656997"
+  const location = process.env.GOOGLE_VERTEX_LOCATION || "global"
 
   vertexXaiInstance = createGoogleVertexXai({
     project,
