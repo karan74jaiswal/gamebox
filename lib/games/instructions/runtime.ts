@@ -1,111 +1,94 @@
+import { GAME_DIR, PREVIEW_PORT } from "@/lib/daytona/utils"
+
 /**
- * Runtime instructions for the Gamebox AI agent.
- * Explains the Daytona sandbox environment, game directory structure, pre-seeded Gamebox 3D runtime primitives, HTTP server, and iframe preview.
+ * The sandbox the game is built in and served from.
+ *
+ * The directory and port are the ones `@/lib/daytona/utils` actually creates
+ * and serves, interpolated rather than restated, so the agent can't be told
+ * about a layout the sandbox doesn't have.
  */
-export const runtimeInstructions = `# Daytona Runtime & Game Environment
+export const runtime = `# Where the game lives
 
-You are operating within a dedicated Daytona Cloud Sandbox environment designed specifically for hosting and serving live web games.
+Each game has its own Linux sandbox, and it is the same sandbox for the whole
+conversation — what you wrote on an earlier turn is still on disk.
 
----
+The game's source lives in ${GAME_DIR}. That directory is the game: nothing
+outside it is served, and nothing that isn't a file in it survives the turn.
 
-## 1. Sandbox Environment Overview
+${GAME_DIR}/index.html is the entry point — it is what loads at "/", so it has
+to exist and has to be the playable game.
 
-- **Platform**: Daytona Cloud Sandbox (\`@daytona/sdk\`).
-- **Operating System**: Linux (Debian-based container).
-- **Resources**: Dedicated vCPU, RAM, and storage per game sandbox.
-- **Network Access**: Outbound internet access to essential services and public CDNs (cdnjs, unpkg, jsdelivr, Google Fonts, GitHub, etc.).
+# What is already there
 
----
+A new sandbox is not empty. It starts with:
 
-## 2. Pre-Seeded Game Directory Structure (\`GAME_DIR\`)
+- index.html — the page, carrying the import map described below.
+- style.css — a full-bleed canvas, no scrolling, no tap highlights.
+- welcome.js — the holding screen. Delete it and its <script> tag on the first
+  turn; it is a placeholder, not part of any game.
+- report.js — the error reporter. It catches whatever the page throws and hands
+  it to the preview panel, which is how a game that fails to start says so
+  instead of showing a black frame. Don't edit it, don't delete it, and leave
+  its <script> tag where it is: first in index.html, above the import map and
+  above your own scripts, and plain rather than type="module". A reporter that
+  loads after the file that broke reports nothing.
+- engine/ — a 3D game toolkit, described in its own section. Read that before
+  building anything, and do not rewrite these files.
 
-- **Root Game Path**: \`/home/daytona/game\` (available in environment as \`GAME_DIR\`).
-- **Primary Entrypoint**: \`/home/daytona/game/index.html\` (served at \`/\`).
-- Every new sandbox is automatically seeded with a full suite of **Gamebox 3D Game Generation Primitives** directly in \`/home/daytona/game/\`:
+# How it reaches the player
 
-\`\`\`
-/home/daytona/game/
-├── index.html            # Main game entrypoint
-├── favicon.svg           # Gamebox app logo / favicon
-├── report.js             # Plain script error reporter (loaded before main.js to capture syntax & runtime errors)
-├── css/
-│   └── gamebox.css       # Complete HUD, UI overlays, touch controls, and screen flash styles
-└── js/
-    ├── gamebox.js        # Unified entrypoint exporting all primitives & Gamebox.create()
-    ├── engine.js         # Core 3D engine, loop, camera, lighting presets, state machine
-    ├── controls.js       # WASD/Arrows, mouse, touch joystick, camera controllers, screen shake
-    ├── hud.js            # Overlay HUD, score, health bars, start/game-over/victory screens
-    ├── sound.js          # Procedural Web Audio API SFX (laser, explosion, jump, coin) & BGM
-    ├── models.js         # Procedural 3D mesh generators (characters, spaceships, cars, arenas)
-    ├── animations.js     # Springs, tweens, smooth damping, bobs/spins, character walk cycle
-    ├── particles.js      # Particle emitters (explosions, sparks, confetti, shockwaves)
-    ├── physics.js        # Arcade 3D physics, AABB/Sphere collision, ArcadeBody, SpatialGrid
-    └── shaders.js        # Custom shaders (cyber grid, hologram, energy shield, dissolve)
-\`\`\`
+A static file server is already running on port ${PREVIEW_PORT} against that
+directory, and the preview panel loads it in an iframe. You never start,
+restart or configure a server; one is running before your first turn, and a
+second one on that port would only fail to bind.
 
-### Path Resolution Rules
-- Always use **relative paths** inside \`index.html\` (e.g. \`./css/gamebox.css\`, \`./js/gamebox.js\`).
-- The static HTTP server serves the root of \`/home/daytona/game\`. Thus, requesting \`/\` serves \`/home/daytona/game/index.html\`.
-- All pre-seeded files in \`./js/\` and \`./css/\` are available immediately without any downloads or installations!
+Files are served exactly as they are written, straight from disk, per request.
+There is no build step, no bundler, no transpiler and no package install, and
+nothing to restart after an edit — a saved file is live on the next reload.
 
----
+That means the browser has to understand what you write:
 
-## 3. Module Loading & Import Maps
+- HTML, CSS and JavaScript that runs as-is. No TypeScript, no JSX, no SCSS.
+- Your own modules load by relative path: "./player.js", "./engine/index.js".
+- Everything runs in the player's browser. The game has no backend, no
+  database and no server-side code; persistence is localStorage.
 
-Inside \`index.html\`, always include the standard Three.js import map:
+# three.js, and the import map
 
-\`\`\`html
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-  }
-}
-</script>
-\`\`\`
+index.html declares an import map, so these two specifiers resolve in the
+browser with no bundler:
 
-Then load the Gamebox toolkit via ES Module:
-\`\`\`html
-<script type="module">
-  import { Gamebox } from './js/gamebox.js';
-  // or import individual primitives:
-  // import { Engine, Controls, HUD, Sound, Models, Particles } from './js/gamebox.js';
-</script>
-\`\`\`
+- "three" — the library itself.
+- "three/addons/..." — everything under examples/jsm: OrbitControls,
+  GLTFLoader, EffectComposer, RoundedBoxGeometry and the rest.
 
----
+  import * as THREE from "three"
+  import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 
-## 4. HTTP Server & Live Preview
+The map only applies to the document that declares it, so it has to stay in
+index.html, above the first module script. If you rewrite index.html, carry it
+across — along with the report.js tag above it — because without the map every
+import of "three" fails and the screen stays blank, including every file under
+engine/.
 
-- **Web Server**: A Python 3 HTTP server runs continuously in the background inside the sandbox:
-  \`nohup python3 -m http.server 3000 --directory /home/daytona/game > /tmp/game-server.log 2>&1 &\`
-- **Server Port**: Port \`3000\` (\`PREVIEW_PORT\`).
-- **Logs**: Server output and errors are logged to \`/tmp/game-server.log\`.
-- **Live Preview Mechanism**:
-  - Daytona generates a signed preview URL for port 3000.
-  - The Gamebox client proxies this through \`/api/games/[id]/preview/live/\` directly into the live preview iframe.
-  - When you update \`/home/daytona/game/index.html\` or related files via \`write_file\`, \`update_file\`, or \`replace_text\`, the preview automatically detects the change and refreshes with the latest game code.
+Any other library has to come from a CDN by full url, loaded by the page.
 
----
+# Assets
 
-## 5. Iframe Constraints & How Gamebox Primitives Solve Them
+Beyond three.js there is no art and no audio in the sandbox, so a path to an
+image you didn't create is a broken image. Build models out of geometry
+(engine/models.js has a shelf of them), draw textures to a canvas
+(engine/materials.js), and synthesise sound (engine/sound.js). Reach for a CDN
+url only when you are certain of it.
 
-The game runs inside a sandboxed browser \`<iframe>\` in the user interface. Gamebox primitives automatically solve the common browser pitfalls:
+# Layout
 
-1. **Focus & Keyboard Events**:
-   - The \`Controls\` primitive automatically focuses the window on pointer down and intercepts all gaming keys (\`ArrowUp\`, \`ArrowDown\`, \`ArrowLeft\`, \`ArrowRight\`, \`Space\`, \`Tab\`) with \`e.preventDefault()\` so the iframe never scrolls unexpectedly.
+Keep a small game in index.html and one module beside it. As it grows, split it
+into more modules next to it (./game.js, ./player.js, ./enemies.js) rather than
+letting one file sprawl — you will be reading this code back on every later
+turn. Leave engine/ alone and import from it; it is shared ground, and a game
+that edits it is a game whose next turn starts by re-reading a toolkit that no
+longer matches what you know about it.`
 
-2. **Responsive Canvas Sizing**:
-   - The \`Engine\` primitive listens to window resize events and automatically recalculates aspect ratios and renders at crisp device pixel ratios (capped at 2 for performance).
-
-3. **Audio Autoplay Policies**:
-   - The \`Sound\` primitive automatically listens for the player's first click, tap, or keypress and unlocks the Web Audio \`AudioContext\` seamlessly.
-
-4. **Persistence & High Scores**:
-   - The \`HUD\` primitive automatically caches high scores in browser \`localStorage\` under a dedicated game key.
-`
-
-export const runtime = runtimeInstructions
-export const RUNTIME_INSTRUCTIONS = runtimeInstructions
-export default runtimeInstructions
+export const runtimeInstructions = runtime
+export default runtime

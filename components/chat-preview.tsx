@@ -185,7 +185,7 @@ export function ChatPreview({
 
     const sendPing = () => {
       try {
-        iframeRef.current?.contentWindow?.postMessage("game-ping", "*")
+        iframeRef.current?.contentWindow?.postMessage({ type: "game-ping" }, "*")
       } catch {
         // Ignore cross-origin error
       }
@@ -207,26 +207,50 @@ export function ChatPreview({
 
       if (data.type === "game-status") {
         if (data.error) {
-          const errObj = data.error
-          const errorMessage =
-            typeof errObj === "string"
-              ? errObj
-              : errObj?.message || String(errObj)
+          const err = data.error
+          const rawMessage =
+            typeof err === "string" ? err : err?.message || String(err)
+          const source =
+            typeof err === "object" && err?.source ? String(err.source) : ""
+          const line =
+            typeof err === "object" && typeof err?.line === "number"
+              ? err.line
+              : null
+          const column =
+            typeof err === "object" && typeof err?.column === "number"
+              ? err.column
+              : null
+          const stack =
+            typeof err === "object" && err?.stack ? String(err.stack) : ""
           const errorName =
-            typeof errObj === "object" && errObj?.name
-              ? String(errObj.name)
-              : "Error"
+            typeof err === "object" && err?.name
+              ? String(err.name)
+              : "RuntimeError"
 
-          setGameRuntimeError(errorMessage)
+          const filename = source ? source.split("/").pop() || source : ""
+          const location =
+            filename && line
+              ? ` (${filename}:${line}${column ? `:${column}` : ""})`
+              : ""
+          const displayMessage =
+            filename && line && !rawMessage.includes(filename)
+              ? `${rawMessage}${location}`
+              : rawMessage
 
-          if (lastLoggedErrorRef.current !== errorMessage) {
-            lastLoggedErrorRef.current = errorMessage
+          setGameRuntimeError(displayMessage)
+
+          if (lastLoggedErrorRef.current !== displayMessage) {
+            lastLoggedErrorRef.current = displayMessage
             Sentry.logger.error(
-              Sentry.logger.fmt`Game preview error: ${errorMessage}`,
+              Sentry.logger.fmt`Game preview error: ${rawMessage}`,
               {
                 gameId: effectiveGameId || "unknown",
                 errorName,
-                errorMessage,
+                errorMessage: rawMessage,
+                source: source || undefined,
+                line: line ?? undefined,
+                column: column ?? undefined,
+                stack: stack || undefined,
               }
             )
           }

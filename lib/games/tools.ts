@@ -46,6 +46,8 @@ export async function getActiveGameSandbox(
   return sandbox
 }
 
+const SAFE_PATH = /^[a-zA-Z0-9._/-]+$/
+
 /**
  * Resolves and strictly confines a target path within the sandbox GAME_DIR (/home/daytona/game).
  * Prevents directory traversal attacks and normalizes relative or absolute paths.
@@ -61,6 +63,12 @@ export function resolveGamePath(
   const normalizedGameDir = path.posix.normalize(baseDir)
   // Normalize Windows-style backslashes to forward slashes
   const sanitized = targetPath.trim().replace(/\\/g, "/")
+
+  if (!SAFE_PATH.test(sanitized)) {
+    throw new Error(
+      `"${targetPath}" isn't a usable path. Use letters, digits, dots, dashes, underscores and slashes only.`
+    )
+  }
 
   let candidate: string
 
@@ -111,13 +119,13 @@ export const writeFileInputSchema = z.object({
   path: z
     .string()
     .describe(
-      "Relative path to the brand NEW file inside the game directory (e.g., 'index.html', 'js/player.js', 'css/style.css')"
+      "Relative path to the file inside the game directory (e.g., 'index.html', 'player.js', 'style.css')"
     ),
   content: z
     .string()
-    .max(35000)
+    .max(128000)
     .describe(
-      "Initial text content for the brand new file. Maximum 35,000 characters (~700 lines). Scaffold a lightweight starter foundation; modularize larger games into separate files in js/."
+      "Initial text content for the file. Maximum 128,000 characters. Scaffold a working foundation; modularize larger games into separate files."
     ),
 })
 
@@ -351,7 +359,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const write_file = tool({
     description:
-      "Create or overwrite a file inside the Daytona sandbox game directory (/home/daytona/game). Keep files concise (under 700 lines / 35,000 characters) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly. For targeted edits under 100 lines, prefer replace_text.",
+      "Create or overwrite a file inside the Daytona sandbox game directory (/home/daytona/game). Keep files concise (under 2,500 lines / 128,000 characters) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly. For targeted edits under 100 lines, prefer replace_text or update_file.",
     inputSchema: writeFileInputSchema,
     execute: async ({ path: filePath, content }) => {
       try {
@@ -359,11 +367,11 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         const sandbox = await resolveSandbox()
 
         const lines = content.length === 0 ? 0 : content.split(/\r?\n/).length
-        if (lines > 700) {
+        if (lines > 2500) {
           return {
             success: false,
             path: relativePath,
-            error: `New file exceeds the 700-line limit (${lines} lines). Keep starter files concise (under 700 lines / 35,000 characters) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly or via targeted updates.`,
+            error: `File exceeds the 2,500-line limit (${lines} lines). Keep files modular (under 128,000 characters) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly or via targeted updates.`,
           }
         }
 
@@ -648,7 +656,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           count = 1
           updatedContent = existingContent.replace(
             matchedOldText,
-            targetNewText
+            () => targetNewText
           )
         }
 

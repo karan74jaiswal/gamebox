@@ -1,28 +1,33 @@
-import { engineInstructions } from "./engine"
-import { runtimeInstructions } from "./runtime"
-import { workflowInstructions } from "./workflow"
-import { type Instructions } from "ai"
+import type { Instructions } from "ai"
+
+import { engine } from "./engine"
+import { runtime } from "./runtime"
+import { workflow } from "./workflow"
 
 /**
- * Combined array of game instructions for the Gamebox AI agent.
- * Combines 3 distinct concern areas:
- * 1. engine.ts   - Complete Gamebox 3D Engine & Primitives API reference
- * 2. runtime.ts  - Daytona Sandbox, HTTP server, and iframe environment
- * 3. workflow.ts - AI agent development rules, tool usage, and incremental progress
+ * The agent's system prompt, as one system message per subject.
+ *
+ * Kept as separate blocks rather than one string so each stays editable on its
+ * own; the Anthropic/provider concatenates them into the request's system
+ * field, so the model reads them as one prompt in this order — what the job is,
+ * then where it is done, then what it is done with.
+ *
+ * `satisfies` rather than an annotation: `Instructions` also admits a bare
+ * string, and the array form is what `streamText` is handed here.
  */
 export const gameInstructions = [
-  { role: "system", content: engineInstructions },
-  { role: "system", content: runtimeInstructions },
-  { role: "system", content: workflowInstructions },
+  { role: "system", content: workflow },
+  { role: "system", content: runtime },
+  { role: "system", content: engine },
 ] satisfies Instructions
 
-/**
- * Alias for gameInstructions.
- */
+/** Alias for gameInstructions used by trigger/chat.ts */
 export const instructions = gameInstructions
-
 export default gameInstructions
 
-export * from "./engine"
-export * from "./runtime"
-export * from "./workflow"
+export { engine, runtime, workflow }
+export {
+  engine as engineInstructions,
+  runtime as runtimeInstructions,
+  workflow as workflowInstructions,
+}
