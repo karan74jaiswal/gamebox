@@ -4,6 +4,10 @@ import type { UIMessage } from "ai"
 import * as Sentry from "@sentry/nextjs"
 
 import { GameChat } from "@/components/game-chat"
+import {
+  GameHeaderTitle,
+  GameHeaderActions,
+} from "@/components/game-header-actions"
 import { getGame } from "@/lib/games/queries"
 import { mintChatAccessToken } from "@/app/actions"
 import { checkAndSyncOrgCredits } from "@/lib/credits"
@@ -67,18 +71,30 @@ export default async function GamePage({
 
   return (
     <div className="flex h-svh flex-col overflow-hidden">
-      <GameChat
-        key={id}
-        id={id}
-        orgId={game.orgId}
-        initialMessages={initialMessages}
-        initialPrompt={prompt}
-        initialModel={initialModel}
-        initialLastEventId={game.lastEventId ?? undefined}
-        initialPublicAccessToken={initialPublicAccessToken}
-        initialSandboxId={game.sandboxId}
-        initialIsOutOfCredits={initialIsOutOfCredits}
-      />
+      {/* Top Header */}
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-border/40 px-6">
+        <GameHeaderTitle id={id} initialTitle={game.title} />
+        <GameHeaderActions
+          id={id}
+          initialTitle={game.title}
+          hasSandbox={Boolean(game.sandboxId)}
+        />
+      </header>
+
+      <div className="min-h-0 flex-1">
+        <GameChat
+          key={id}
+          id={id}
+          orgId={game.orgId}
+          initialMessages={initialMessages}
+          initialPrompt={prompt}
+          initialModel={initialModel}
+          initialLastEventId={game.lastEventId ?? undefined}
+          initialPublicAccessToken={initialPublicAccessToken}
+          initialSandboxId={game.sandboxId}
+          initialIsOutOfCredits={initialIsOutOfCredits}
+        />
+      </div>
     </div>
   )
 }

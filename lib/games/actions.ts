@@ -7,6 +7,7 @@ import { generateId, type UIMessage } from "ai"
 import * as Sentry from "@sentry/nextjs"
 
 import { db, games, type Game } from "@/lib/db"
+import { deleteGameSandbox } from "@/lib/daytona/utils"
 
 import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
 
@@ -123,3 +124,112 @@ export async function saveGameMessages(
     throw error
   }
 }
+
+export async function renameGame(id: string, title: string): Promise<Game> {
+  const { orgId } = await auth()
+  if (!orgId) {
+    Sentry.logger.warn("Unauthorized renameGame attempt without orgId")
+    throw new Error("Unauthorized: Organization ID is required")
+  }
+
+  const trimmed = title.trim()
+  if (!trimmed) {
+    throw new Error("Title cannot be empty")
+  }
+
+  Sentry.getIsolationScope().setAttributes({
+    action: "renameGame",
+    gameId: id,
+    orgId,
+  })
+
+  Sentry.logger.info("Renaming game", { gameId: id, title: trimmed, orgId })
+
+  try {
+    const [updatedGame] = await db
+      .update(games)
+      .set({
+        title: trimmed,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(games.id, id), eq(games.orgId, orgId)))
+      .returning()
+
+    if (!updatedGame) {
+      throw new Error("Game not found")
+    }
+
+    revalidatePath("/", "layout")
+    revalidatePath(`/games/${id}`)
+
+    Sentry.logger.info("Game renamed successfully", {
+      gameId: id,
+      title: trimmed,
+      orgId,
+    })
+
+    return updatedGame
+  } catch (error) {
+    Sentry.logger.error("Failed to rename game in database", {
+      gameId: id,
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  }
+}
+
+export async function deleteGame(id: string): Promise<{ success: boolean }> {
+  const { orgId } = await auth()
+  if (!orgId) {
+    Sentry.logger.warn("Unauthorized deleteGame attempt without orgId")
+    throw new Error("Unauthorized: Organization ID is required")
+  }
+
+  Sentry.getIsolationScope().setAttributes({
+    action: "deleteGame",
+    gameId: id,
+    orgId,
+  })
+
+  Sentry.logger.info("Deleting game", { gameId: id, orgId })
+
+  try {
+    // 1. Fetch game to get sandboxId before deleting
+    const [game] = await db
+      .select({ id: games.id, sandboxId: games.sandboxId })
+      .from(games)
+      .where(and(eq(games.id, id), eq(games.orgId, orgId)))
+      .limit(1)
+
+    if (!game) {
+      throw new Error("Game not found")
+    }
+
+    // 2. Delete game record from database
+    await db
+      .delete(games)
+      .where(and(eq(games.id, id), eq(games.orgId, orgId)))
+
+    // 3. Clean up Daytona sandbox(es) to avoid stray sandboxes
+    await deleteGameSandbox(id, game.sandboxId)
+
+    // 4. Invalidate cache
+    revalidatePath("/", "layout")
+
+    Sentry.logger.info("Game deleted successfully", {
+      gameId: id,
+      orgId,
+    })
+
+    return { success: true }
+  } catch (error) {
+    Sentry.logger.error("Failed to delete game", {
+      gameId: id,
+      orgId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+    throw error
+  }
+}
+

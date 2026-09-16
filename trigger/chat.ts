@@ -172,6 +172,7 @@ export const gameChat = chat.agent({
   },
   uiMessageStreamOptions: {
     sendReasoning: true,
+
     onError: (error) => {
       if (isAbortError(error) || chat.isStopped()) {
         locals.set(streamErrorKey, undefined)
@@ -296,8 +297,7 @@ export const gameChat = chat.agent({
       )
     }
 
-    const modelId =
-      clientData?.model || DEFAULT_MODEL_ID
+    const modelId = clientData?.model || DEFAULT_MODEL_ID
 
     Sentry.logger.info("Game chat model stream initiated", {
       chatId,

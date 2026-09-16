@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import type { SidebarGame } from "@/lib/games/queries"
+import { SidebarGameActions } from "@/components/game-header-actions"
 
 export type { SidebarGame }
 
@@ -123,6 +124,7 @@ function SidebarRecentsList({
   const [titleOverrides, setTitleOverrides] = React.useState<
     Record<string, string>
   >({})
+  const [deletedIds, setDeletedIds] = React.useState<Set<string>>(new Set())
 
   React.useEffect(() => {
     const handleTitleUpdate = (event: Event) => {
@@ -134,19 +136,35 @@ function SidebarRecentsList({
       // router.refresh()
     }
 
+    const handleGameDeleted = (event: Event) => {
+      const customEvent = event as CustomEvent<{ id?: string }>
+      const { id } = customEvent.detail || {}
+      if (!id) return
+
+      setDeletedIds((prev) => {
+        const updated = new Set(prev)
+        updated.add(id)
+        return updated
+      })
+    }
+
     window.addEventListener("game-title-updated", handleTitleUpdate)
+    window.addEventListener("game-deleted", handleGameDeleted)
     return () => {
       window.removeEventListener("game-title-updated", handleTitleUpdate)
+      window.removeEventListener("game-deleted", handleGameDeleted)
     }
   }, [router])
 
   const gamesList = React.useMemo(() => {
-    return resolved.map((game) =>
-      titleOverrides[game.id]
-        ? { ...game, title: titleOverrides[game.id] }
-        : game
-    )
-  }, [resolved, titleOverrides])
+    return resolved
+      .filter((game) => !deletedIds.has(game.id))
+      .map((game) =>
+        titleOverrides[game.id]
+          ? { ...game, title: titleOverrides[game.id] }
+          : game
+      )
+  }, [resolved, titleOverrides, deletedIds])
 
   return (
     <>
@@ -170,6 +188,7 @@ function SidebarRecentsList({
                   <MessageSquareIcon />
                   <span>{game.title}</span>
                 </SidebarMenuButton>
+                <SidebarGameActions id={game.id} title={game.title} />
               </SidebarMenuItem>
             ))}
           </SidebarMenu>
@@ -212,6 +231,7 @@ function SidebarRecentsList({
                         <MessageSquareIcon />
                         <span>{game.title}</span>
                       </SidebarMenuButton>
+                      <SidebarGameActions id={game.id} title={game.title} />
                     </SidebarMenuItem>
                   ))}
                 </SidebarMenu>

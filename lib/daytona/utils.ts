@@ -1,5 +1,5 @@
 import path from "node:path"
-import type { Sandbox } from "@daytona/sdk"
+import { DaytonaError, DaytonaNotFoundError, type Sandbox } from "@daytona/sdk"
 import { eq } from "drizzle-orm"
 import * as Sentry from "@sentry/nextjs"
 import { daytona } from "./client"
@@ -252,3 +252,86 @@ export async function createGameSandbox(id: string): Promise<Sandbox> {
 }
 
 export const createSandbox = createGameSandbox
+
+/**
+ * Deletes the Daytona sandbox(es) associated with a game.
+ * First deletes the primary sandbox by sandboxId if present,
+ * and also sweeps for any stray sandboxes labeled with this gameId to ensure
+ * no stray sandboxes remain.
+ */
+export async function deleteGameSandbox(
+  gameId: string,
+  sandboxId?: string | null
+): Promise<void> {
+  const deletedSandboxIds = new Set<string>()
+
+  if (sandboxId) {
+    try {
+      Sentry.logger.info("Deleting Daytona sandbox by ID", { gameId, sandboxId })
+      const sandbox = await daytona.get(sandboxId)
+      await sandbox.delete()
+      deletedSandboxIds.add(sandboxId)
+      Sentry.logger.info("Daytona sandbox deleted successfully", {
+        gameId,
+        sandboxId,
+      })
+    } catch (error) {
+      if (error instanceof DaytonaNotFoundError) {
+        Sentry.logger.info("Daytona sandbox already deleted or not found", {
+          gameId,
+          sandboxId,
+        })
+      } else if (error instanceof DaytonaError) {
+        Sentry.logger.warn("Daytona error deleting sandbox by ID", {
+          gameId,
+          sandboxId,
+          error: error.message,
+          statusCode: error.statusCode,
+        })
+      } else {
+        Sentry.logger.warn("Unexpected error deleting Daytona sandbox by ID", {
+          gameId,
+          sandboxId,
+          error: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+  }
+
+  // Sweep for any stray sandboxes labeled with this gameId
+  try {
+    for await (const sandbox of daytona.list({ labels: { gameId } })) {
+      if (!deletedSandboxIds.has(sandbox.id)) {
+        try {
+          Sentry.logger.info("Deleting stray Daytona sandbox with gameId label", {
+            gameId,
+            sandboxId: sandbox.id,
+          })
+          await sandbox.delete()
+          deletedSandboxIds.add(sandbox.id)
+        } catch (error) {
+          if (error instanceof DaytonaNotFoundError) {
+            // Already removed
+          } else if (error instanceof DaytonaError) {
+            Sentry.logger.warn("Daytona error deleting stray sandbox", {
+              gameId,
+              sandboxId: sandbox.id,
+              error: error.message,
+            })
+          } else {
+            Sentry.logger.warn("Unexpected error deleting stray sandbox", {
+              gameId,
+              sandboxId: sandbox.id,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          }
+        }
+      }
+    }
+  } catch (error) {
+    Sentry.logger.warn("Failed to list sandboxes for cleanup", {
+      gameId,
+      error: error instanceof Error ? error.message : String(error),
+    })
+  }
+}

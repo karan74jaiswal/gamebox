@@ -112,7 +112,7 @@ export function prepareStepContext(
   stepMessages: ModelMessage[],
   stepNumber: number
 ): { messages: ModelMessage[] } {
-  const sanitized = sanitizeStep(stepMessages, { windowSteps: 25 })
+  const sanitized = sanitizeStep(stepMessages, { windowSteps: 22 })
 
   logger.info(
     `-------------------- [STEP ${stepNumber}: LLM PAYLOAD] (Turn Step: ${stepNumber}) --------------------`,
@@ -187,8 +187,7 @@ export async function chargeStepCredits(
       chatId,
       orgId,
       stepResponseId,
-      error:
-        chargeErr instanceof Error ? chargeErr.message : String(chargeErr),
+      error: chargeErr instanceof Error ? chargeErr.message : String(chargeErr),
     })
     logger.error("Failed to charge step in game chat", {
       error: chargeErr,
