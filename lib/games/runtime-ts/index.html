@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>New game</title>
+
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./style.css" />
+
+    <!--
+      Catches whatever the game throws and hands it to the preview panel when
+      it asks. Keep it first, and keep it a plain script: it can only report a
+      syntax error in a file that has not been compiled yet, so anything that
+      loads before it fails silently.
+    -->
+    <script>
+      ;(function () {
+        var PING = "game-ping"
+        var STATUS = "game-status"
+        var MAX_MESSAGE = 1000
+        var MAX_STACK = 2000
+        var firstError = null
+
+        function clamp(value, limit) {
+          var text = String(value)
+          return text.length > limit ? text.slice(0, limit) + "…" : text
+        }
+
+        function record(report) {
+          if (firstError) return
+          firstError = report
+        }
+
+        function describe(error, message, source, line, column) {
+          var thrown = error && typeof error === "object" ? error : null
+          return {
+            message: clamp(
+              message || (thrown && thrown.message) || error || "Unknown error",
+              MAX_MESSAGE
+            ),
+            source: source ? String(source) : "",
+            line: typeof line === "number" ? line : null,
+            column: typeof column === "number" ? column : null,
+            stack: thrown && thrown.stack ? clamp(thrown.stack, MAX_STACK) : "",
+          }
+        }
+
+        window.addEventListener(
+          "error",
+          function (event) {
+            var target = event.target
+            if (target && target !== window && (target.src || target.href)) {
+              record(describe(null, "Failed to load " + (target.src || target.href)))
+              return
+            }
+            record(
+              describe(
+                event.error,
+                event.message,
+                event.filename,
+                event.lineno,
+                event.colno
+              )
+            )
+          },
+          true
+        )
+
+        window.addEventListener("unhandledrejection", function (event) {
+          var reason = event.reason
+          var described = describe(reason)
+          described.message = clamp(
+            "Unhandled rejection: " + described.message,
+            MAX_MESSAGE
+          )
+          record(described)
+        })
+
+        window.addEventListener("message", function (event) {
+          var data = event.data
+          if (!data || data.type !== PING) return
+          var source = event.source || window.parent
+          if (!source) return
+          source.postMessage({ type: STATUS, error: firstError }, "*")
+        })
+      })()
+    </script>
+  </head>
+  <body>
+    <!--
+      The holding screen a new sandbox serves until the agent writes a real game
+      over it. It exists so the preview has something to show on the very first
+      load, before the first turn has produced any code — and it is built on the
+      same `./engine/` modules a game is, as a worked example of them.
+    -->
+    <script type="module" src="./welcome.ts"></script>
+  </body>
+</html>

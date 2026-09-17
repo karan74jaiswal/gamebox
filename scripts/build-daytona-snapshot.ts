@@ -7,10 +7,8 @@ import { getRuntimeSeedData } from "../lib/games/seed"
 config({ path: path.resolve(process.cwd(), ".env.local") })
 config({ path: path.resolve(process.cwd(), ".env") })
 
-const SNAPSHOT_NAME =
-  process.env.DAYTONA_SNAPSHOT_NAME || "gamebox-runtime-v1"
-const BASE_SNAPSHOT =
-  process.env.DAYTONA_BASE_SNAPSHOT || "daytona-small"
+const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "gamebox-runtime-v1"
+const BASE_SNAPSHOT = process.env.DAYTONA_BASE_SNAPSHOT || "daytona-small"
 const GAME_DIR = process.env.GAME_DIR || "/home/daytona/game"
 
 async function buildSnapshot() {
@@ -93,7 +91,9 @@ async function buildSnapshot() {
 
     console.log("\n=======================================================")
     console.log(`✅ SUCCESS: Daytona Snapshot '${SNAPSHOT_NAME}' is ready!`)
-    console.log("Future sandboxes will now boot in ~2.5s with zero file uploads.")
+    console.log(
+      "Future sandboxes will now boot in ~2.5s with zero file uploads."
+    )
     console.log(
       `Set DAYTONA_SNAPSHOT_NAME=${SNAPSHOT_NAME} in your production environment.`
     )
