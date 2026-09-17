@@ -158,74 +158,123 @@ export async function startGameServer(
 }
 
 /**
- * Creates a Daytona sandbox for a game, seeds $GAME_DIR with all files,
- * folders, and subfolders from lib/games/runtime/*, and stores the sandboxId on the game record.
+ * Seeds $GAME_DIR with all files, folders, and subfolders from lib/games/runtime/*
+ * Used as a fallback when a pre-built snapshot is not available.
  */
-export async function createGameSandbox(id: string): Promise<Sandbox> {
-  Sentry.logger.info("Creating Daytona game sandbox", { gameId: id })
-
+export async function seedSandboxFiles(sandbox: Sandbox): Promise<void> {
+  // Ensure official game directory exists
   try {
-    // 1. Create the sandbox
-    const sandbox = await daytona.create({
-      labels: { gameId: id },
-    })
-
-    // 2. Ensure official game directory exists
+    await sandbox.fs.createFolder(GAME_DIR, "755")
+  } catch {
     try {
-      await sandbox.fs.createFolder(GAME_DIR, "755")
+      await sandbox.process.executeCommand(`mkdir -p ${GAME_DIR}`)
+    } catch {
+      // Ignore if directory already exists
+    }
+  }
+
+  // Seed all files, folders, and subfolders from runtime/*
+  const { folders, files } = await getRuntimeSeedData()
+
+  // Create all folders and subfolders first (sorted shallowest to deepest)
+  for (const folder of folders) {
+    const remoteFolderPath = path.posix.join(GAME_DIR, folder.relativePath)
+    try {
+      await sandbox.fs.createFolder(remoteFolderPath, "755")
     } catch {
       try {
-        await sandbox.process.executeCommand(`mkdir -p ${GAME_DIR}`)
+        await sandbox.process.executeCommand(`mkdir -p "${remoteFolderPath}"`)
       } catch {
         // Ignore if directory already exists
       }
     }
+  }
 
-    // 3. Seed all files, folders, and subfolders from runtime/*
-    const { folders, files } = await getRuntimeSeedData()
+  // Upload all files into the sandbox
+  for (const file of files) {
+    const remoteFilePath = path.posix.join(GAME_DIR, file.relativePath)
+    const parentDir = path.posix.dirname(remoteFilePath)
 
-    // Create all folders and subfolders first (sorted shallowest to deepest)
-    for (const folder of folders) {
-      const remoteFolderPath = path.posix.join(GAME_DIR, folder.relativePath)
+    if (parentDir !== GAME_DIR) {
       try {
-        await sandbox.fs.createFolder(remoteFolderPath, "755")
+        await sandbox.fs.createFolder(parentDir, "755")
       } catch {
         try {
-          await sandbox.process.executeCommand(`mkdir -p "${remoteFolderPath}"`)
+          await sandbox.process.executeCommand(`mkdir -p "${parentDir}"`)
         } catch {
-          // Ignore if directory already exists
+          // Ignore
         }
       }
     }
 
-    // Upload all files into the sandbox
-    for (const file of files) {
-      const remoteFilePath = path.posix.join(GAME_DIR, file.relativePath)
-      const parentDir = path.posix.dirname(remoteFilePath)
+    const content = await file.read()
+    await sandbox.fs.uploadFile(content, remoteFilePath)
+  }
 
-      if (parentDir !== GAME_DIR) {
-        try {
-          await sandbox.fs.createFolder(parentDir, "755")
-        } catch {
-          try {
-            await sandbox.process.executeCommand(`mkdir -p "${parentDir}"`)
-          } catch {
-            // Ignore
+  // Fallback if no files were found in runtime directory
+  if (files.length === 0) {
+    const indexPath = path.posix.join(GAME_DIR, "index.html")
+    await sandbox.fs.uploadFile(Buffer.from("New game"), indexPath)
+  }
+}
+
+export const DEFAULT_DAYTONA_SNAPSHOT = "gamebox-runtime-v1"
+
+/**
+ * Creates a Daytona sandbox for a game.
+ * Uses a pre-built snapshot (e.g. gamebox-runtime-v1) if available for ~2.5s fast boot with zero file uploads.
+ * If the snapshot is not found or fails, falls back gracefully to daytona-small + in-app seeding.
+ * Stores the sandboxId on the game record and kicks off the background web server proactively.
+ */
+export async function createGameSandbox(id: string): Promise<Sandbox> {
+  const snapshotName =
+    process.env.DAYTONA_SNAPSHOT_NAME || DEFAULT_DAYTONA_SNAPSHOT
+  Sentry.logger.info("Creating Daytona game sandbox", { gameId: id, snapshotName })
+
+  try {
+    let sandbox: Sandbox | null = null
+    let preSeeded = false
+
+    if (snapshotName) {
+      try {
+        sandbox = await daytona.create({
+          snapshot: snapshotName,
+          labels: { gameId: id },
+        })
+        preSeeded = true
+        Sentry.logger.info("Daytona game sandbox created from snapshot", {
+          gameId: id,
+          sandboxId: sandbox.id,
+          snapshot: snapshotName,
+        })
+      } catch (snapErr) {
+        Sentry.logger.warn(
+          "Snapshot creation failed or snapshot not found, falling back to daytona-small with in-app seed",
+          {
+            snapshotName,
+            error: snapErr instanceof Error ? snapErr.message : String(snapErr),
           }
-        }
+        )
       }
-
-      const content = await file.read()
-      await sandbox.fs.uploadFile(content, remoteFilePath)
     }
 
-    // Fallback if no files were found in runtime directory
-    if (files.length === 0) {
-      const indexPath = path.posix.join(GAME_DIR, "index.html")
-      await sandbox.fs.uploadFile(Buffer.from("New game"), indexPath)
+    if (!sandbox) {
+      // Fallback: create base daytona-small container and seed files manually
+      sandbox = await daytona.create({
+        snapshot: "daytona-small",
+        labels: { gameId: id },
+      })
     }
 
-    // 4. Save the sandboxId on the game record
+    if (!preSeeded) {
+      await seedSandboxFiles(sandbox)
+      Sentry.logger.info("Daytona game sandbox seeded via fallback", {
+        gameId: id,
+        sandboxId: sandbox.id,
+      })
+    }
+
+    // Save the sandboxId on the game record
     await db
       .update(games)
       .set({
@@ -234,12 +283,21 @@ export async function createGameSandbox(id: string): Promise<Sandbox> {
       })
       .where(eq(games.id, id))
 
-    Sentry.logger.info("Daytona game sandbox created and seeded", {
-      gameId: id,
-      sandboxId: sandbox.id,
-      foldersCount: folders.length,
-      filesCount: files.length,
-    })
+    // Proactively start the game server in background
+    try {
+      await sandbox.process.executeCommand(
+        `nohup python3 -m http.server ${PREVIEW_PORT} --directory ${GAME_DIR} > ${SERVER_LOG} 2>&1 &`
+      )
+    } catch (serverErr) {
+      Sentry.logger.warn(
+        "Proactive server start warning (will retry on preview mount)",
+        {
+          sandboxId: sandbox.id,
+          error:
+            serverErr instanceof Error ? serverErr.message : String(serverErr),
+        }
+      )
+    }
 
     return sandbox
   } catch (error) {
@@ -252,6 +310,7 @@ export async function createGameSandbox(id: string): Promise<Sandbox> {
 }
 
 export const createSandbox = createGameSandbox
+
 
 /**
  * Deletes the Daytona sandbox(es) associated with a game.

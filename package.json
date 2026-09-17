@@ -13,7 +13,8 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "trigger:dev": "trigger dev",
-    "trigger:deploy": "trigger deploy"
+    "trigger:deploy": "trigger deploy",
+    "daytona:snapshot": "npx tsx scripts/build-daytona-snapshot.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.49",
