@@ -45,7 +45,7 @@ export default async function GamePage({
   const hasIncompleteTurn = lastMessage?.role === "user"
 
   let initialPublicAccessToken: string | undefined
-  if (hasIncompleteTurn) {
+  if (initialMessages.length > 0) {
     try {
       initialPublicAccessToken = await mintChatAccessToken(id)
     } catch (error) {

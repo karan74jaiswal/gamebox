@@ -118,7 +118,7 @@ export const gameChat = chat.agent({
       chat.defer(() => generateAndPersistGameTitle(chatId, promptText))
     }
   },
-  onTurnStart: async ({ chatId, clientData }) => {
+  onTurnStart: async ({ chatId, uiMessages, clientData }) => {
     locals.set(streamErrorKey, undefined)
     locals.set(rawStreamErrorKey, undefined)
     locals.set(resolvedErrorKey, undefined)
@@ -128,6 +128,19 @@ export const gameChat = chat.agent({
     if (orgId) {
       locals.set(orgIdKey, orgId)
     }
+
+    // Persist full accumulated history (including user message or answered tool output)
+    // before output streams to the client, guaranteeing that a mid-stream refresh reads the updated state.
+    chat.deferBeforeOutput(
+      withDbRetry(
+        () =>
+          db
+            .update(games)
+            .set({ messages: uiMessages, updatedAt: new Date() })
+            .where(eq(games.id, chatId)),
+        "onTurnStart:update"
+      )
+    )
 
     Sentry.logger.info("Game chat turn started", {
       chatId,
