@@ -23,8 +23,8 @@ import type {
   StatOptions,
   TextOptions,
   TouchButtonsOptions,
-} from "./types.js"
-import { brand } from "./materials.js"
+} from "./types.ts"
+import { brand } from "./materials.ts"
 
 /**
  * The layer of DOM over the canvas: score, health, timers, menus, messages.

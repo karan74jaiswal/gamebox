@@ -1,7 +1,7 @@
 import * as THREE from "three"
 
-import type { Engine, EngineOptions, FogConfig, RenderTarget } from "./types.js"
-import { clamp } from "./math.js"
+import type { Engine, EngineOptions, FogConfig, RenderTarget } from "./types.ts"
+import { clamp } from "./math.ts"
 
 /**
  * The renderer, scene, camera and frame loop, set up the way a game wants them.

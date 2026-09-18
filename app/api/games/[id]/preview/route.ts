@@ -50,7 +50,7 @@ export async function GET(
       )
     }
 
-    const sandbox = await startGameServer(game.sandboxId)
+    const sandbox = await startGameServer(game.sandboxId, PREVIEW_PORT, id)
     const { url } = await sandbox.getSignedPreviewUrl(
       PREVIEW_PORT,
       PREVIEW_URL_TTL_SECONDS

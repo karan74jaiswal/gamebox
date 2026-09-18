@@ -110,19 +110,19 @@ Object.defineProperty((globalThis as any).localStorage, "length", {
 ;(globalThis as any).matchMedia = (query: string) => ({ matches: false })
 
 // --- Import Engine Modules ---
-import * as math from "../lib/games/runtime-ts/engine/math.js"
-import * as materials from "../lib/games/runtime-ts/engine/materials.js"
-import * as lighting from "../lib/games/runtime-ts/engine/lighting.js"
-import * as models from "../lib/games/runtime-ts/engine/models.js"
-import * as physics from "../lib/games/runtime-ts/engine/physics.js"
-import * as animation from "../lib/games/runtime-ts/engine/animation.js"
-import * as state from "../lib/games/runtime-ts/engine/state.js"
-import * as particles from "../lib/games/runtime-ts/engine/particles.js"
-import * as sound from "../lib/games/runtime-ts/engine/sound.js"
-import * as hud from "../lib/games/runtime-ts/engine/hud.js"
-import * as debug from "../lib/games/runtime-ts/engine/debug.js"
-import * as engineModule from "../lib/games/runtime-ts/engine/engine.js"
-import * as runtime from "../lib/games/runtime-ts/engine/index.js"
+import * as math from "../lib/games/runtime-ts/engine/math.ts"
+import * as materials from "../lib/games/runtime-ts/engine/materials.ts"
+import * as lighting from "../lib/games/runtime-ts/engine/lighting.ts"
+import * as models from "../lib/games/runtime-ts/engine/models.ts"
+import * as physics from "../lib/games/runtime-ts/engine/physics.ts"
+import * as animation from "../lib/games/runtime-ts/engine/animation.ts"
+import * as state from "../lib/games/runtime-ts/engine/state.ts"
+import * as particles from "../lib/games/runtime-ts/engine/particles.ts"
+import * as sound from "../lib/games/runtime-ts/engine/sound.ts"
+import * as hud from "../lib/games/runtime-ts/engine/hud.ts"
+import * as debug from "../lib/games/runtime-ts/engine/debug.ts"
+import * as engineModule from "../lib/games/runtime-ts/engine/engine.ts"
+import * as runtime from "../lib/games/runtime-ts/engine/index.ts"
 
 let passed = 0
 let failed = 0

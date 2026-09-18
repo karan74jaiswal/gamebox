@@ -1,6 +1,6 @@
 import * as THREE from "three"
 
-import type { ColorLike, Engine, PhysicsWorld } from "./types.js"
+import type { ColorLike, Engine, PhysicsWorld } from "./types.ts"
 
 /**
  * Things to look at while building, and to take out before shipping.

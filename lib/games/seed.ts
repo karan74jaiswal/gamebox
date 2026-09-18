@@ -35,10 +35,12 @@ export interface RuntimeSeedData {
 export function getRuntimeDir(): string {
   const currentDir = path.dirname(fileURLToPath(import.meta.url))
   const candidates = [
+    path.resolve(currentDir, "runtime-ts"),
+    path.resolve(process.cwd(), "lib/games/runtime-ts"),
+    path.resolve(currentDir, "../games/runtime-ts"),
+    path.resolve(process.cwd(), "runtime-ts"),
     path.resolve(currentDir, "runtime"),
     path.resolve(process.cwd(), "lib/games/runtime"),
-    path.resolve(currentDir, "../games/runtime"),
-    path.resolve(process.cwd(), "runtime"),
   ]
 
   for (const candidate of candidates) {
@@ -51,7 +53,7 @@ export function getRuntimeDir(): string {
     }
   }
 
-  return path.resolve(process.cwd(), "lib/games/runtime")
+  return path.resolve(process.cwd(), "lib/games/runtime-ts")
 }
 
 /**
@@ -77,7 +79,14 @@ export async function getRuntimeEntries(
   const results: RuntimeEntry[] = []
 
   for (const entry of entries) {
-    if (entry.name === ".DS_Store") continue
+    if (
+      entry.name === ".DS_Store" ||
+      entry.name === "node_modules" ||
+      entry.name === "dist" ||
+      entry.name === ".git"
+    ) {
+      continue
+    }
 
     const entryRelPath = currentRelativeDir
       ? `${currentRelativeDir}/${entry.name}`

@@ -7,7 +7,7 @@ import type {
   SoundOutput,
   SoundPlayConfig,
   ToneConfig,
-} from "./types.js"
+} from "./types.ts"
 
 declare global {
   interface Window {

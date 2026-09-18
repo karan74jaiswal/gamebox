@@ -7,7 +7,7 @@ import {
   models,
   lights,
   math,
-} from "./engine/index.js"
+} from "./engine/index.ts"
 
 /**
  * The holding screen: the product's mark, as a rotating solid.

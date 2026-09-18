@@ -107,13 +107,22 @@ export async function getGameSandbox(gameId: string): Promise<Sandbox> {
   }
 }
 
+export const VITE_SERVER_COMMAND = (
+  port: number = PREVIEW_PORT,
+  gameId?: string
+) => {
+  const baseArg = gameId ? `--base /api/games/${gameId}/preview/live/` : ""
+  return `cd ${GAME_DIR} && (test -d node_modules || bun install || npm install) && nohup npx vite --host 0.0.0.0 --port ${port} ${baseArg} > ${SERVER_LOG} 2>&1 &`
+}
+
 /**
  * Starts an HTTP server inside the sandbox serving $GAME_DIR/index.html.
  * Performs a health-check first to avoid starting duplicate server instances.
  */
 export async function startGameServer(
   sandboxId: string,
-  port: number = PREVIEW_PORT
+  port: number = PREVIEW_PORT,
+  gameIdParam?: string
 ): Promise<Sandbox> {
   Sentry.logger.info("Starting sandbox game server", { sandboxId, port })
   try {
@@ -121,11 +130,11 @@ export async function startGameServer(
 
     if (sandbox.state !== "started") await sandbox.start()
 
+    const gameId = gameIdParam || sandbox.labels?.gameId
+
     if (!(await serverResponds(sandbox))) {
-      // Start Python 3 HTTP server in background logging to SERVER_LOG
-      await sandbox.process.executeCommand(
-        `nohup python3 -m http.server ${port} --directory ${GAME_DIR} > ${SERVER_LOG} 2>&1 &`
-      )
+      // Start Vite dev server in background logging to SERVER_LOG
+      await sandbox.process.executeCommand(VITE_SERVER_COMMAND(port, gameId))
 
       if (!(await serverResponds(sandbox, START_RETRIES))) {
         const log = await sandbox.process.executeCommand(`cat ${SERVER_LOG}`)
@@ -218,11 +227,11 @@ export async function seedSandboxFiles(sandbox: Sandbox): Promise<void> {
   }
 }
 
-export const DEFAULT_DAYTONA_SNAPSHOT = "gamebox-runtime-v1"
+export const DEFAULT_DAYTONA_SNAPSHOT = "gamebox-runtime-v2"
 
 /**
  * Creates a Daytona sandbox for a game.
- * Uses a pre-built snapshot (e.g. gamebox-runtime-v1) if available for ~2.5s fast boot with zero file uploads.
+ * Uses a pre-built snapshot (e.g. gamebox-runtime-v2) if available for ~2.5s fast boot with zero file uploads.
  * If the snapshot is not found or fails, falls back gracefully to daytona-small + in-app seeding.
  * Stores the sandboxId on the game record and kicks off the background web server proactively.
  */
@@ -285,9 +294,7 @@ export async function createGameSandbox(id: string): Promise<Sandbox> {
 
     // Proactively start the game server in background
     try {
-      await sandbox.process.executeCommand(
-        `nohup python3 -m http.server ${PREVIEW_PORT} --directory ${GAME_DIR} > ${SERVER_LOG} 2>&1 &`
-      )
+      await sandbox.process.executeCommand(VITE_SERVER_COMMAND(PREVIEW_PORT, id))
     } catch (serverErr) {
       Sentry.logger.warn(
         "Proactive server start warning (will retry on preview mount)",

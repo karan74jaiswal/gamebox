@@ -3,15 +3,15 @@ import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js"
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js"
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js"
 
-import type { ColorLike, Vector3Tuple } from "./types.js"
+import type { ColorLike, Vector3Tuple } from "./types.ts"
 import {
   matte,
   palette,
   shade,
   checkerTexture,
   textTexture,
-} from "./materials.js"
-import { randRange, randInt, TAU } from "./math.js"
+} from "./materials.ts"
+import { randRange, randInt, TAU } from "./math.ts"
 
 /**
  * Things to put in the scene, built out of primitives.

@@ -1,5 +1,5 @@
 import * as THREE from "three"
-import type { ColorLike } from "./types.js"
+import type { ColorLike } from "./types.ts"
 
 /**
  * Colour, surfaces, and textures drawn in code.

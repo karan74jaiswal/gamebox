@@ -12,8 +12,8 @@ import type {
   SphereCollider,
   Vector3Like,
   Vector3Tuple,
-} from "./types.js"
-import { clamp } from "./math.js"
+} from "./types.ts"
+import { clamp } from "./math.ts"
 
 /**
  * Arcade collision — the kind games actually want.

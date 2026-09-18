@@ -25,11 +25,11 @@ first turn that produces a game and one that produces a renderer.
 
 Import from the barrel, which re-exports everything:
 
-  import { createGame, models, lights, materials, math } from "./engine/index.js"
+  import { createGame, models, lights, materials, math } from "./engine/index.ts"
 
 ## The whole shape of a game
 
-  import { createGame, models, lights, ease } from "./engine/index.js"
+  import { createGame, models, lights, ease } from "./engine/index.ts"
 
   const game = createGame({
     background: "#0b1020",

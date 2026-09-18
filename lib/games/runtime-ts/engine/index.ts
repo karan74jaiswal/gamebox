@@ -1,7 +1,7 @@
 /**
  * The game toolkit, in one import.
  *
- *   import { createGame, models, lights } from "./engine/index.js"
+ *   import { createGame, models, lights } from "./engine/index.ts"
  *
  * Two ways in. `createGame()` wires up everything a game always needs — a
  * renderer, a loop, input, a HUD, sound and tweens — in one call, and is where
@@ -13,29 +13,29 @@
  * also exported flat.
  */
 
-import { createEngine } from "./engine.js"
-import { createInput } from "./input.js"
-import { createHud } from "./hud.js"
-import { createAudio } from "./sound.js"
-import { createTweens } from "./animation.js"
-import type { Game, GameOptions } from "./types.js"
+import { createEngine } from "./engine.ts"
+import { createInput } from "./input.ts"
+import { createHud } from "./hud.ts"
+import { createAudio } from "./sound.ts"
+import { createTweens } from "./animation.ts"
+import type { Game, GameOptions } from "./types.ts"
 
-export * from "./types.js"
+export * from "./types.ts"
 
-export * as math from "./math.js"
-export * as models from "./models.js"
-export * as materials from "./materials.js"
-export * as lights from "./lighting.js"
-export * as effects from "./particles.js"
-export * as anim from "./animation.js"
-export * as debug from "./debug.js"
+export * as math from "./math.ts"
+export * as models from "./models.ts"
+export * as materials from "./materials.ts"
+export * as lights from "./lighting.ts"
+export * as effects from "./particles.ts"
+export * as anim from "./animation.ts"
+export * as debug from "./debug.ts"
 
-export { createEngine, disposeObject } from "./engine.js"
-export { createInput } from "./input.js"
-export { createHud } from "./hud.js"
-export { createAudio } from "./sound.js"
-export { createPhysics, hits, inside } from "./physics.js"
-export { createPostFX } from "./postfx.js"
+export { createEngine, disposeObject } from "./engine.ts"
+export { createInput } from "./input.ts"
+export { createHud } from "./hud.ts"
+export { createAudio } from "./sound.ts"
+export { createPhysics, hits, inside } from "./physics.ts"
+export { createPostFX } from "./postfx.ts"
 
 export {
   createTweens,
@@ -47,14 +47,14 @@ export {
   pop,
   hover,
   ease,
-} from "./animation.js"
+} from "./animation.ts"
 
 export {
   createParticles,
   createTrail,
   createAmbience,
   shockwave,
-} from "./particles.js"
+} from "./particles.ts"
 
 export {
   createStateMachine,
@@ -66,7 +66,7 @@ export {
   createDifficulty,
   createEvents,
   formatTime,
-} from "./state.js"
+} from "./state.ts"
 
 export {
   orbitCamera,
@@ -78,9 +78,9 @@ export {
   platformer,
   pointerOnGround,
   pointerPicker,
-} from "./controls.js"
+} from "./controls.ts"
 
-export { palette, brand } from "./materials.js"
+export { palette, brand } from "./materials.ts"
 
 /**
  * Everything a game needs, started and ready.

@@ -119,7 +119,7 @@ export const writeFileInputSchema = z.object({
   path: z
     .string()
     .describe(
-      "Relative path to the file inside the game directory (e.g., 'index.html', 'player.js', 'style.css')"
+      "Relative path to the file inside the game directory (e.g., 'index.html', 'player.ts', 'style.css')"
     ),
   content: z
     .string()
@@ -133,7 +133,7 @@ export const updateFileInputSchema = z.object({
   path: z
     .string()
     .describe(
-      "Relative path to the existing file inside the game directory to update (e.g., 'index.html', 'js/game.js')"
+      "Relative path to the existing file inside the game directory to update (e.g., 'index.html', 'game.ts')"
     ),
   mode: z
     .enum(["replace_lines", "insert_at_line", "append", "prepend"])
@@ -180,7 +180,7 @@ export const replaceTextInputSchema = z.object({
   path: z
     .string()
     .describe(
-      "Relative path to the existing file inside the game directory (e.g., 'index.html', 'js/game.js')"
+      "Relative path to the existing file inside the game directory (e.g., 'index.html', 'game.ts')"
     ),
   oldText: z
     .string()
@@ -210,7 +210,7 @@ export const readFileInputSchema = z.object({
   path: z
     .string()
     .describe(
-      "Relative path to the file inside the game directory to read (e.g., 'index.html', 'js/game.js')"
+      "Relative path to the file inside the game directory to read (e.g., 'index.html', 'game.ts')"
     ),
   startLine: z
     .number()
@@ -241,14 +241,9 @@ export const listFilesInputSchema = z.object({
   path: z
     .string()
     .optional()
+    .default(".")
     .describe(
-      "Subdirectory path relative to the game directory to list (e.g., '.', 'js', 'assets'). Defaults to '.' (root game directory)."
-    ),
-  recursive: z
-    .boolean()
-    .optional()
-    .describe(
-      "Whether to recursively list files across subdirectories. Defaults to true."
+      "Directory path relative to the game directory to list (e.g., '.', 'engine', 'node_modules/three'). Defaults to '.' (root game directory)."
     ),
 })
 
@@ -256,7 +251,7 @@ export const deleteFileInputSchema = z.object({
   path: z
     .string()
     .describe(
-      "Relative path to the file or directory inside the game directory to delete (e.g., 'js/old.js', 'temp.txt')"
+      "Relative path to the file or directory inside the game directory to delete (e.g., 'old.ts', 'temp.txt')"
     ),
   recursive: z
     .boolean()
@@ -785,23 +780,22 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const list_files = tool({
     description:
-      "List files and directories inside the Daytona sandbox game directory, including file sizes and line counts. Use this to explore the project structure and check line counts before deciding to inspect or edit files.",
+      "List files and directories inside a specific directory of the Daytona sandbox. Always lists immediate contents (depth 1) of the specified path. Returns separate 'directories' (to explore further) and 'files' (with sizes and line counts).",
     inputSchema: listFilesInputSchema,
-    execute: async ({ path: dirPath = ".", recursive = true }) => {
+    execute: async ({ path: dirPath = "." }) => {
       try {
         const { fullPath, relativePath } = resolveGamePath(dirPath)
         const sandbox = await resolveSandbox()
 
-        const depth = recursive ? 5 : 1
         const normalizedGameDir = path.posix.normalize(GAME_DIR)
 
-        // Concurrently query file tree and line counts directly via sandbox container
+        // Concurrently query immediate file tree (depth 1) and line counts
         const [fileEntries, lineCountsMap] = await Promise.all([
-          sandbox.fs.listFiles(fullPath, { depth }),
+          sandbox.fs.listFiles(fullPath, { depth: 1 }),
           (async () => {
             try {
-              // Execute wc -l on non-hidden files directly in sandbox
-              const cmd = `find "${fullPath}" -maxdepth ${depth} -type f ! -path '*/.*' -exec wc -l {} +`
+              // Execute wc -l on immediate non-hidden files in this directory
+              const cmd = `find "${fullPath}" -maxdepth 1 -name ".*" -prune -o -type f -exec wc -l {} +`
               const res = await sandbox.process.executeCommand(
                 cmd,
                 undefined,
@@ -830,34 +824,67 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           })(),
         ])
 
-        const files = (fileEntries || []).map((entry) => {
-          const entryPath = entry.path || path.posix.join(fullPath, entry.name)
+        const HIDDEN_NAMES = new Set([
+          ".git",
+          ".vite",
+          "dist",
+          ".DS_Store",
+        ])
+
+        const isTargetingHidden =
+          relativePath.startsWith(".") && relativePath !== "."
+
+        const visibleEntries = (fileEntries || []).filter((entry) => {
+          if (!isTargetingHidden) {
+            if (HIDDEN_NAMES.has(entry.name) || entry.name.startsWith(".")) {
+              return false
+            }
+          }
+          return true
+        })
+
+        const directories: { name: string; path: string }[] = []
+        const files: {
+          name: string
+          path: string
+          size: number
+          lines: number | null
+          modifiedAt: string
+        }[] = []
+
+        for (const entry of visibleEntries) {
+          const entryPath =
+            entry.path || path.posix.join(fullPath, entry.name)
           const relPath = path.posix.isAbsolute(entryPath)
             ? path.posix.relative(normalizedGameDir, entryPath)
             : entryPath
 
-          const lineCount = entry.isDir ? undefined : lineCountsMap.get(relPath)
-
-          return {
-            name: entry.name,
-            path: relPath || entry.name,
-            isDir: Boolean(entry.isDir),
-            size: entry.size ?? 0,
-            ...(entry.isDir ? {} : { lines: lineCount ?? null }),
-            modifiedAt: entry.modifiedAt || entry.modTime || "",
+          if (entry.isDir) {
+            directories.push({
+              name: entry.name,
+              path: relPath || entry.name,
+            })
+          } else {
+            const lineCount = lineCountsMap.get(relPath) ?? null
+            files.push({
+              name: entry.name,
+              path: relPath || entry.name,
+              size: entry.size ?? 0,
+              lines: lineCount,
+              modifiedAt: entry.modifiedAt || entry.modTime || "",
+            })
           }
-        })
+        }
 
-        // Sort directories first, then alphabetical by path
-        files.sort((a, b) => {
-          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
-          return a.path.localeCompare(b.path)
-        })
+        directories.sort((a, b) => a.path.localeCompare(b.path))
+        files.sort((a, b) => a.path.localeCompare(b.path))
 
         return {
           success: true,
           path: relativePath,
-          count: files.length,
+          totalDirectories: directories.length,
+          totalFiles: files.length,
+          directories,
           files,
         }
       } catch (error) {
@@ -865,6 +892,9 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           success: false,
           path: dirPath,
           error: `Failed to list files in '${dirPath}': ${error instanceof Error ? error.message : String(error)}`,
+          totalDirectories: 0,
+          totalFiles: 0,
+          directories: [],
           files: [],
         }
       }

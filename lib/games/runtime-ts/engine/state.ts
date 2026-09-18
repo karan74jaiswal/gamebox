@@ -13,7 +13,7 @@ import type {
   StorageTracker,
   Ticker,
   TimerOptions,
-} from "./types.js"
+} from "./types.ts"
 
 /**
  * What the game is doing, what the player has, and what survives a reload.

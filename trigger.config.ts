@@ -1,8 +1,5 @@
 import { defineConfig } from "@trigger.dev/sdk"
-import {
-  additionalFiles,
-  additionalPackages,
-} from "@trigger.dev/build/extensions/core"
+import { additionalPackages } from "@trigger.dev/build/extensions/core"
 import { esbuildPlugin } from "@trigger.dev/build/extensions"
 import { sentryEsbuildPlugin } from "@sentry/esbuild-plugin"
 
@@ -44,9 +41,7 @@ export default defineConfig({
           "expand-tilde@^2.0.2",
         ],
       }),
-      additionalFiles({
-        files: ["./lib/games/runtime/**"],
-      }),
+
       esbuildPlugin(
         sentryEsbuildPlugin({
           org: "personal-0e7",

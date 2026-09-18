@@ -8,8 +8,8 @@ import type {
   TweenManager,
   TweenOptions,
   TweenPromise,
-} from "./types.js"
-import { clamp01, ease, type EaseFunction } from "./math.js"
+} from "./types.ts"
+import { clamp01, ease, type EaseFunction } from "./math.ts"
 
 /**
  * Motion that isn't the game loop: tweens, springs, shakes, hit flashes, and

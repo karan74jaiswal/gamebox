@@ -79,7 +79,7 @@ export async function GET(
   let cached = previewUrlCache.get(game.sandboxId)
 
   if (!cached || cached.expiresAt <= now) {
-    const sandbox = await startGameServer(game.sandboxId)
+    const sandbox = await startGameServer(game.sandboxId, PREVIEW_PORT, id)
     const { url } = await sandbox.getSignedPreviewUrl(
       PREVIEW_PORT,
       PREVIEW_URL_TTL_SECONDS
@@ -94,12 +94,9 @@ export async function GET(
   const subpath = subpaths && subpaths.length > 0 ? subpaths.join("/") : ""
   const buildTargetUrl = (base: string) => {
     const baseParsed = new URL(base)
-    const target = new URL(
-      subpath
-        ? `${baseParsed.pathname.replace(/\/$/, "")}/${subpath}`
-        : baseParsed.pathname || "/",
-      baseParsed.origin
-    )
+    // Vite base in sandbox is configured to /api/games/${id}/preview/live/
+    const targetPath = `/api/games/${id}/preview/live/${subpath}`
+    const target = new URL(targetPath, baseParsed.origin)
     baseParsed.searchParams.forEach((val, key) => {
       target.searchParams.set(key, val)
     })
@@ -113,6 +110,11 @@ export async function GET(
 
   const forwardHeaders = new Headers(request.headers)
   forwardHeaders.set("X-Daytona-Skip-Preview-Warning", "true")
+  forwardHeaders.set("X-Daytona-Trust-Forwarded-Host", "true")
+  const hostHeader = request.headers.get("host")
+  if (hostHeader) {
+    forwardHeaders.set("X-Forwarded-Host", hostHeader)
+  }
   forwardHeaders.delete("host")
 
   let response = await fetch(targetUrl.toString(), {
@@ -128,7 +130,7 @@ export async function GET(
       upstreamStatus: response.status,
     })
     previewUrlCache.delete(game.sandboxId)
-    const sandbox = await startGameServer(game.sandboxId)
+    const sandbox = await startGameServer(game.sandboxId, PREVIEW_PORT, id)
     const { url } = await sandbox.getSignedPreviewUrl(
       PREVIEW_PORT,
       PREVIEW_URL_TTL_SECONDS

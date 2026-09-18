@@ -8,7 +8,7 @@ import { OutputPass } from "three/addons/postprocessing/OutputPass.js"
 import { VignetteShader } from "three/addons/shaders/VignetteShader.js"
 import { FXAAShader } from "three/addons/shaders/FXAAShader.js"
 
-import type { Engine, RenderTarget } from "./types.js"
+import type { Engine, RenderTarget } from "./types.ts"
 
 /**
  * The pass that makes a scene look like a game rather than a viewport.

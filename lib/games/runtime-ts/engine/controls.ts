@@ -1,8 +1,8 @@
 import * as THREE from "three"
 import { OrbitControls } from "three/addons/controls/OrbitControls.js"
 
-import type { Engine, InputManager, PhysicsBody, Vector3Tuple } from "./types.js"
-import { clamp, damp, dampAngle, dampVec } from "./math.js"
+import type { Engine, InputManager, PhysicsBody, Vector3Tuple } from "./types.ts"
+import { clamp, damp, dampAngle, dampVec } from "./math.ts"
 
 /**
  * Cameras that follow, and characters that move.

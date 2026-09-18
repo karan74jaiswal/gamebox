@@ -1,6 +1,6 @@
 import * as THREE from "three"
-import type { ColorLike, Vector3Tuple } from "./types.js"
-import { brand, palette } from "./materials.js"
+import type { ColorLike, Vector3Tuple } from "./types.ts"
+import { brand, palette } from "./materials.ts"
 
 /**
  * Light rigs, ready-made.

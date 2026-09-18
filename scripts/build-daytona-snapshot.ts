@@ -7,7 +7,7 @@ import { getRuntimeSeedData } from "../lib/games/seed"
 config({ path: path.resolve(process.cwd(), ".env.local") })
 config({ path: path.resolve(process.cwd(), ".env") })
 
-const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "gamebox-runtime-v1"
+const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "gamebox-runtime-v2"
 const BASE_SNAPSHOT = process.env.DAYTONA_BASE_SNAPSHOT || "daytona-small"
 const GAME_DIR = process.env.GAME_DIR || "/home/daytona/game"
 
@@ -28,17 +28,15 @@ async function buildSnapshot() {
 
   const daytona = new Daytona()
 
-  // 1. Check if snapshot already exists
+  // 1. Check if snapshot already exists; if so, delete it to rebuild cleanly
   try {
     const existing = await daytona.snapshot.get(SNAPSHOT_NAME)
     if (existing) {
       console.log(
-        `⚠️ Snapshot '${SNAPSHOT_NAME}' already exists (state: ${existing.state}).`
+        `⚠️ Snapshot '${SNAPSHOT_NAME}' already exists (state: ${existing.state}). Deleting to rebuild...`
       )
-      console.log(
-        "To rebuild, either delete it first via Daytona dashboard or specify a new DAYTONA_SNAPSHOT_NAME."
-      )
-      return
+      await daytona.snapshot.delete(existing)
+      console.log(` Previous snapshot '${SNAPSHOT_NAME}' deleted successfully.`)
     }
   } catch {
     // Expected when snapshot does not yet exist
@@ -59,7 +57,7 @@ async function buildSnapshot() {
       await sandbox.process.executeCommand(`mkdir -p "${GAME_DIR}"`)
     }
 
-    console.log("\nStep 3/5: Seeding runtime files from lib/games/runtime...")
+    console.log("\nStep 3/5: Seeding runtime files from lib/games/runtime-ts...")
     const { folders, files } = await getRuntimeSeedData()
 
     for (const folder of folders) {
@@ -80,6 +78,14 @@ async function buildSnapshot() {
       process.stdout.write(`\r Uploaded ${uploaded}/${files.length} files...`)
     }
     console.log(`\n All ${files.length} runtime files seeded successfully.`)
+
+    console.log(
+      "\nStep 3.5/5: Installing dependencies in sandbox (bun install || npm install)..."
+    )
+    const installResult = await sandbox.process.executeCommand(
+      `cd "${GAME_DIR}" && (bun install || npm install)`
+    )
+    console.log(installResult.result?.trim() || "Dependencies installed.")
 
     console.log("\nStep 4/5: Stopping sandbox for cold snapshot capture...")
     await sandbox.stop()

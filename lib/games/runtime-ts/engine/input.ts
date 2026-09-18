@@ -1,7 +1,7 @@
 import * as THREE from "three"
 
-import type { InputActionMap, InputManager, InputOptions } from "./types.js"
-import { deadzone } from "./math.js"
+import type { InputActionMap, InputManager, InputOptions } from "./types.ts"
+import { deadzone } from "./math.ts"
 
 /**
  * Keyboard, mouse, touch and gamepad behind one per-frame snapshot.

@@ -8,9 +8,9 @@ import type {
   ParticleSystem,
   StreamConfig,
   Vector3Like,
-} from "./types.js"
-import { sparkTexture, palette } from "./materials.js"
-import { randRange, randSpread, TAU } from "./math.js"
+} from "./types.ts"
+import { sparkTexture, palette } from "./materials.ts"
+import { randRange, randSpread, TAU } from "./math.ts"
 
 /**
  * Sparks, smoke, debris, trails — the things that make an event feel like it
