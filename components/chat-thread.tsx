@@ -24,6 +24,7 @@ import {
   useChatTransport,
   useCodeWatcher,
   useInitialPrompt,
+  useReconciledMessages,
 } from "./chat"
 
 export {
@@ -134,6 +135,12 @@ export function ChatThread({
       Sentry.logger.info("Client chat turn finished", {
         chatId: id || "unknown",
       })
+      if (
+        reconciledMessagesRef.current &&
+        reconciledMessagesRef.current.length > 0
+      ) {
+        setMessages(reconciledMessagesRef.current)
+      }
       flushCodeUpdateRef.current()
       router.refresh()
     },
@@ -147,7 +154,16 @@ export function ChatThread({
     },
   })
 
-  const { flushCodeUpdate } = useCodeWatcher({ id, messages })
+  const reconciledMessages = useReconciledMessages(messages, initialMessages)
+  const reconciledMessagesRef = React.useRef(reconciledMessages)
+  React.useEffect(() => {
+    reconciledMessagesRef.current = reconciledMessages
+  }, [reconciledMessages])
+
+  const { flushCodeUpdate } = useCodeWatcher({
+    id,
+    messages: reconciledMessages,
+  })
   React.useEffect(() => {
     flushCodeUpdateRef.current = flushCodeUpdate
   }, [flushCodeUpdate])
@@ -161,15 +177,15 @@ export function ChatThread({
     initialPrompt,
     initialIsOutOfCredits,
     selectedModel,
-    messagesLength: messages.length,
+    messagesLength: reconciledMessages.length,
     sendMessage,
     setMessages,
     setIsOutOfCredits,
   })
 
   const isWaitingForPlayerAnswer = React.useMemo(() => {
-    if (messages.length === 0 || error) return false
-    const lastMessage = messages[messages.length - 1]
+    if (reconciledMessages.length === 0 || error) return false
+    const lastMessage = reconciledMessages[reconciledMessages.length - 1]
     if (lastMessage.role !== "assistant" || !lastMessage.parts) return false
 
     return lastMessage.parts.some((part) => {
@@ -184,7 +200,7 @@ export function ChatThread({
 
       return !isAnswered
     })
-  }, [messages, error])
+  }, [reconciledMessages, error])
 
   const handleSendMessage = (value: string, options?: { model?: string }) => {
     if (!orgId || isWaitingForPlayerAnswer || isOutOfCredits) {
@@ -196,8 +212,8 @@ export function ChatThread({
       setSelectedModel(options.model)
     }
 
-    if (error && !isAbortError(error) && messages.length > 0) {
-      const lastMsg = messages[messages.length - 1]
+    if (error && !isAbortError(error) && reconciledMessages.length > 0) {
+      const lastMsg = reconciledMessages[reconciledMessages.length - 1]
       const errorText = sanitizeErrorMessage(error.message || error)
       if (lastMsg.role === "user") {
         setMessages((prev) => [
@@ -309,7 +325,7 @@ export function ChatThread({
   return (
     <div className={cn("flex size-full min-h-0 flex-col", className)}>
       <ChatMessageList
-        messages={messages}
+        messages={reconciledMessages}
         status={status}
         isGenerating={isGenerating}
         initialPrompt={initialPrompt}

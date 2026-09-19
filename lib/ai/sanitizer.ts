@@ -1,6 +1,7 @@
 import {
   pruneMessages,
   type ModelMessage,
+  type AssistantModelMessage,
   type ToolCallPart,
   type ToolResultPart,
 } from "ai"
@@ -240,7 +241,11 @@ export function getAskPlayerChosenLabel(
   // 4. Lookup from question options to enrich with missing label or description
   if (typeof input === "object" && input !== null) {
     let inputRec: Record<string, unknown> = input as Record<string, unknown>
-    if ("value" in inputRec && typeof inputRec.value === "object" && inputRec.value !== null) {
+    if (
+      "value" in inputRec &&
+      typeof inputRec.value === "object" &&
+      inputRec.value !== null
+    ) {
       inputRec = inputRec.value as Record<string, unknown>
     }
     const options = Array.isArray(inputRec.options) ? inputRec.options : []
@@ -255,10 +260,18 @@ export function getAskPlayerChosenLabel(
     )
 
     if (matched) {
-      if (!chosenLabel && typeof matched.label === "string" && matched.label.trim()) {
+      if (
+        !chosenLabel &&
+        typeof matched.label === "string" &&
+        matched.label.trim()
+      ) {
         chosenLabel = matched.label.trim()
       }
-      if (!chosenDescription && typeof matched.description === "string" && matched.description.trim()) {
+      if (
+        !chosenDescription &&
+        typeof matched.description === "string" &&
+        matched.description.trim()
+      ) {
         chosenDescription = matched.description.trim()
       }
     }
@@ -354,7 +367,72 @@ export function sanitizeContext(
     pruned = pruned.map((message) => pruneTokensFromMessage(message, tokens))
   }
 
+  // 4. Strip historical providerOptions (such as Gemini thoughtSignature) from older turns and text parts
+  pruned = cleanHistoricalProviderOptions(pruned)
+
   return pruned
+}
+
+/**
+ * Strips historical providerOptions (such as Gemini/Vertex thoughtSignature)
+ * from past turns and pure text parts, keeping context minimal and clean.
+ * Preserves providerOptions only on active in-flight tool calls in the trailing assistant message.
+ */
+export function cleanHistoricalProviderOptions(
+  messages: ModelMessage[]
+): ModelMessage[] {
+  let lastAssistantIndex = -1
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === "assistant") {
+      lastAssistantIndex = i
+      break
+    }
+  }
+
+  return messages.map((msg, index) => {
+    if (msg.role !== "assistant") {
+      return msg
+    }
+
+    const isLastAssistant = index === lastAssistantIndex
+    const assistantMsg = msg as AssistantModelMessage
+
+    // If content is a string or text-only, no providerOptions needed
+    if (typeof assistantMsg.content === "string") {
+      if (!assistantMsg.providerOptions) return assistantMsg
+      const cleanMsg = { ...assistantMsg }
+      delete cleanMsg.providerOptions
+      return cleanMsg
+    }
+
+    // Process parts using standard part types
+    const cleanedParts = assistantMsg.content.map((part) => {
+      // Text parts never need providerOptions in history
+      if (part.type === "text" && "providerOptions" in part) {
+        const cleanPart = { ...part }
+        delete cleanPart.providerOptions
+        return cleanPart
+      }
+
+      // For tool calls: only keep providerOptions on the most recent assistant message
+      if (!isLastAssistant && "providerOptions" in part) {
+        const cleanPart = { ...part }
+        delete cleanPart.providerOptions
+        return cleanPart
+      }
+
+      return part
+    })
+
+    // On older messages, drop message-level providerOptions as well
+    if (!isLastAssistant && assistantMsg.providerOptions) {
+      const cleanMsg = { ...assistantMsg }
+      delete cleanMsg.providerOptions
+      return { ...cleanMsg, content: cleanedParts }
+    }
+
+    return { ...assistantMsg, content: cleanedParts }
+  })
 }
 
 function pruneString(text: string, tokens: Array<string | RegExp>): string {

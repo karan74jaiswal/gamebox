@@ -1,6 +1,6 @@
 import { locals, logger } from "@trigger.dev/sdk"
 import { chat, upsertIncomingMessage } from "@trigger.dev/sdk/ai"
-import { streamText, stepCountIs, type UIMessage } from "ai"
+import { stepCountIs, type UIMessage } from "ai"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
 import * as Sentry from "@sentry/node"
@@ -130,16 +130,14 @@ export const gameChat = chat.agent({
     }
 
     // Persist full accumulated history (including user message or answered tool output)
-    // before output streams to the client, guaranteeing that a mid-stream refresh reads the updated state.
-    chat.deferBeforeOutput(
-      withDbRetry(
-        () =>
-          db
-            .update(games)
-            .set({ messages: uiMessages, updatedAt: new Date() })
-            .where(eq(games.id, chatId)),
-        "onTurnStart:update"
-      )
+    // before the model runs, guaranteeing that a mid-stream refresh reads the updated state.
+    await withDbRetry(
+      () =>
+        db
+          .update(games)
+          .set({ messages: uiMessages, updatedAt: new Date() })
+          .where(eq(games.id, chatId)),
+      "onTurnStart:update"
     )
 
     Sentry.logger.info("Game chat turn started", {
@@ -300,7 +298,7 @@ export const gameChat = chat.agent({
     })
   },
 
-  run: async ({ messages, tools, signal, clientData, chatId }) => {
+  run: async ({ messages, tools, signal, clientData, chatId, streamText }) => {
     setGameChatContext(chatId)
 
     const orgId = clientData?.orgId || locals.get(orgIdKey)
@@ -336,8 +334,8 @@ export const gameChat = chat.agent({
     )
 
     return streamText({
-      ...chat.toStreamTextOptions({ tools }),
       model: selectedModel,
+      tools,
       instructions,
       messages: sanitizedMessages,
       abortSignal: signal,
