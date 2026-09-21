@@ -140,7 +140,17 @@ pickups, checkpoints, damage zones. Also: world.raycast, world.groundAt (for
 terrain the box colliders can't describe), and \`hits(a, b, rA, rB)\` for
 bullets that need no body at all.
 
+For real rigid-body simulation (marbles, pinball, mini-golf, rolling balls,
+physics puzzles, or stacks), use the pre-installed \`@dimforge/rapier3d-compat\`
+(load \`threejs-gameplay-systems\` for Rapier architecture and fixed-timestep loop).
+For fast arcade feel (runners, shooters, platformers, dogfights), \`createPhysics()\`
+is faster, simpler, and feels tighter.
+
 ## models — things to put in the scene
+
+Primitives and prefabs for rapid assembly. For premium/AAA games, do not stop
+at unrefined primitives — consult \`threejs-aaa-graphics-builder\` to author
+multi-part silhouettes, PBR materials, and custom kits.
 
 Primitives, shadows already configured: box (with a \`radius\` for rounded
 corners), sphere, cylinder, cone, capsule, torus, ground (checkered by default,

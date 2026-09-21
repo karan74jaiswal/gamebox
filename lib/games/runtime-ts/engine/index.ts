@@ -108,7 +108,7 @@ export function createGame(options: GameOptions = {}): Game {
 
   engine.start()
 
-  return {
+  const game: Game = {
     engine,
     input,
     hud,
@@ -123,4 +123,10 @@ export function createGame(options: GameOptions = {}): Game {
     add: engine.add,
     remove: engine.remove,
   }
+
+  if (typeof window !== "undefined") {
+    ;(window as unknown as { __GAME__?: unknown }).__GAME__ = game
+  }
+
+  return game
 }

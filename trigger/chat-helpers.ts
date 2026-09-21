@@ -134,6 +134,7 @@ export function prepareStepContext(
  * real-time credit updates to the connected client.
  */
 export async function chargeStepCredits(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   step: StepResult<any>,
   params: {
     orgId: string

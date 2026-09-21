@@ -17,6 +17,7 @@ import { db, games, withDbRetry } from "@/lib/db"
 import { getGameSandbox } from "@/lib/daytona/utils"
 import { tools, setGameChatContext } from "@/lib/games/tools"
 import { reconcileTurnMessages } from "@/lib/ai/messages"
+import { getGameSkills } from "./game-skills"
 import {
   chargeStepCredits,
   generateAndPersistGameTitle,
@@ -32,6 +33,7 @@ const orgIdKey = locals.create<string>("game-chat.orgId")
 export const gameChat = chat.agent({
   id: "game-chat",
   tools,
+
   clientDataSchema: z.object({
     model: z.string().optional(),
     provider: z.string().optional(),
@@ -123,6 +125,7 @@ export const gameChat = chat.agent({
     locals.set(rawStreamErrorKey, undefined)
     locals.set(resolvedErrorKey, undefined)
     setGameChatContext(chatId)
+    chat.skills.set(await getGameSkills())
 
     const orgId = clientData?.orgId || locals.get(orgIdKey)
     if (orgId) {
@@ -333,12 +336,65 @@ export const gameChat = chat.agent({
       }
     )
 
+    const activeSkills = chat.skills()
+    logger.info(
+      `==================== [TRIGGER.DEV SKILLS ACTIVE] (Chat: ${chatId}) ====================`,
+      {
+        skillCount: activeSkills?.length ?? 0,
+        skills: activeSkills?.map((s) => ({
+          id: s.id,
+          name: s.frontmatter.name,
+          description: s.frontmatter.description,
+        })),
+      }
+    )
+
     return streamText({
       model: selectedModel,
       tools,
       instructions,
       messages: sanitizedMessages,
       abortSignal: signal,
+
+      onLanguageModelCallStart: (event) => {
+        const rawInstructions = event.instructions
+        const systemPromptText =
+          typeof rawInstructions === "string"
+            ? rawInstructions
+            : Array.isArray(rawInstructions)
+              ? rawInstructions
+                  .map((m) =>
+                    typeof m === "object" && m && "content" in m
+                      ? String(m.content)
+                      : JSON.stringify(m)
+                  )
+                  .join("\n\n---\n\n")
+              : typeof rawInstructions === "object" &&
+                  rawInstructions &&
+                  "content" in rawInstructions
+                ? String((rawInstructions as { content: unknown }).content)
+                : JSON.stringify(rawInstructions)
+
+        const toolNames = event.tools
+          ? event.tools
+              .map((t) => (t as { name?: string }).name)
+              .filter(Boolean)
+          : []
+
+        logger.info(
+          `==================== [LLM CALL: ACTUAL RUNTIME PROMPT & TOOLS] (Chat: ${chatId}) ====================`,
+          {
+            provider: event.provider,
+            modelId: event.modelId,
+            callId: event.callId,
+            systemPrompt: systemPromptText,
+            rawInstructions,
+            toolNames,
+            toolsCount: toolNames.length,
+            messagesCount: event.messages?.length ?? 0,
+          }
+        )
+      },
 
       stopWhen: stepCountIs(100),
       maxRetries: 4,

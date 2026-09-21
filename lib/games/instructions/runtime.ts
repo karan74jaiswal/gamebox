@@ -49,16 +49,21 @@ transpiles your code on the fly in milliseconds as files are saved:
 - Everything runs in the player's browser. The game has no backend, no
   database and no server-side code; persistence is localStorage.
 
-# three.js and imports
+# Libraries and imports
 
-Three.js is installed locally in the project and resolved automatically by Vite:
+Installed locally in the project and resolved automatically by Vite:
 
 - "three" — the library itself.
 - "three/addons/..." — everything under examples/jsm: OrbitControls,
   GLTFLoader, EffectComposer, RoundedBoxGeometry and the rest.
+- "@dimforge/rapier3d-compat" — full 3D physics engine (Rust/WASM) for rigid
+  bodies, colliders, sensors, and simulation (marbles, pinball, mini-golf, stacks).
+- "lil-gui" — floating GUI for live-tuning game variables and parameters.
 
   import * as THREE from "three"
   import { OrbitControls } from "three/addons/controls/OrbitControls.js"
+  import RAPIER from "@dimforge/rapier3d-compat"
+  import GUI from "lil-gui"
 
 The engine toolkit is available at ./engine/index.ts.
 

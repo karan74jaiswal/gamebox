@@ -21,6 +21,13 @@ export const gameInstructions = [
   { role: "system", content: engine },
 ] satisfies Instructions
 
+/**
+ * Full combined plain-text instructions.
+ * Used for chat.agent({ system: instructionsText }) so Trigger.dev's
+ * agent-level system prompt and auto-injected skills preamble merge cleanly.
+ */
+export const instructionsText = [workflow, runtime, engine].join("\n\n")
+
 /** Alias for gameInstructions used by trigger/chat.ts */
 export const instructions = gameInstructions
 export default gameInstructions
