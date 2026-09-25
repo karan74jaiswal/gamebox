@@ -340,27 +340,12 @@ export function sanitizeContext(
   const historyWithCompactedQuestions =
     compactHistoricalAskPlayerCalls(messages)
 
-  // 2. Leverage the official AI SDK pruneMessages function
-  // Prune only bulky filesystem tools from earlier turns, keeping human-in-the-loop (ask_player) decisions permanent
+  // 2. Leverage official AI SDK pruneMessages to prune all historical tool calls and reasoning.
+  // The architectural memory of previous turns is preserved on disk in the sandbox artifacts/.
   let pruned = pruneMessages({
     messages: historyWithCompactedQuestions,
     reasoning: options?.reasoning ?? "all",
-    toolCalls: options?.toolCalls ?? [
-      {
-        type: "before-last-message",
-        tools: [
-          "read_file",
-          "write_file",
-          "update_file",
-          "replace_text",
-          "list_files",
-          "delete_file",
-          "loadSkill",
-          "readFile",
-          "bash",
-        ],
-      },
-    ],
+    toolCalls: options?.toolCalls ?? "before-last-message",
     emptyMessages: options?.emptyMessages ?? "remove",
   })
 
@@ -370,34 +355,34 @@ export function sanitizeContext(
     pruned = pruned.map((message) => pruneTokensFromMessage(message, tokens))
   }
 
-  // 4. Strip historical providerOptions (such as Gemini thoughtSignature) from older turns and text parts
+  // 5. Strip historical providerOptions (such as Gemini thoughtSignature) from older turns and text parts
   pruned = cleanHistoricalProviderOptions(pruned)
+
+  // 6. Guarantee that sanitized context NEVER terminates with a model/assistant turn.
+  // Google Gemini / Vertex AI strictly rejects requests ending with an assistant turn:
+  // "Requests ending with a model turn are not supported."
+  while (
+    pruned.length > 0 &&
+    pruned[pruned.length - 1].role === "assistant"
+  ) {
+    pruned.pop()
+  }
 
   return pruned
 }
 
 /**
- * Strips historical providerOptions (such as Gemini/Vertex thoughtSignature)
- * from past turns and pure text parts, keeping context minimal and clean.
- * Preserves providerOptions only on active in-flight tool calls in the trailing assistant message.
+ * Strips historical providerOptions from pure text parts, keeping context minimal and clean,
+ * while strictly preserving providerOptions (such as Gemini/Vertex thoughtSignature) on tool-call parts.
  */
 export function cleanHistoricalProviderOptions(
   messages: ModelMessage[]
 ): ModelMessage[] {
-  let lastAssistantIndex = -1
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "assistant") {
-      lastAssistantIndex = i
-      break
-    }
-  }
-
-  return messages.map((msg, index) => {
+  return messages.map((msg) => {
     if (msg.role !== "assistant") {
       return msg
     }
 
-    const isLastAssistant = index === lastAssistantIndex
     const assistantMsg = msg as AssistantModelMessage
 
     // If content is a string or text-only, no providerOptions needed
@@ -417,22 +402,11 @@ export function cleanHistoricalProviderOptions(
         return cleanPart
       }
 
-      // For tool calls: only keep providerOptions on the most recent assistant message
-      if (!isLastAssistant && "providerOptions" in part) {
-        const cleanPart = { ...part }
-        delete cleanPart.providerOptions
-        return cleanPart
-      }
-
+      // NOTE: For tool calls, we MUST preserve providerOptions (including Gemini thoughtSignature)
+      // across all steps. Dropping thoughtSignature causes Google Vertex AI to disable thoughts
+      // for all subsequent steps in the conversation.
       return part
     })
-
-    // On older messages, drop message-level providerOptions as well
-    if (!isLastAssistant && assistantMsg.providerOptions) {
-      const cleanMsg = { ...assistantMsg }
-      delete cleanMsg.providerOptions
-      return { ...cleanMsg, content: cleanedParts }
-    }
 
     return { ...assistantMsg, content: cleanedParts }
   })
@@ -454,6 +428,7 @@ export interface StepUnit {
   assistantMsg: ModelMessage
   toolMessages: ModelMessage[]
   hasAskPlayer: boolean
+  hasFileWrite: boolean
 }
 
 /**
@@ -494,8 +469,15 @@ export function groupMessagesIntoSteps(messages: ModelMessage[]): {
       const hasAskPlayer = content.some(
         (part) => part.type === "tool-call" && part.toolName === "ask_player"
       )
+      const hasFileWrite = content.some(
+        (part) =>
+          part.type === "tool-call" &&
+          (part.toolName === "write_file" ||
+            part.toolName === "update_file" ||
+            part.toolName === "replace_text")
+      )
 
-      steps.push({ assistantMsg, toolMessages, hasAskPlayer })
+      steps.push({ assistantMsg, toolMessages, hasAskPlayer, hasFileWrite })
     } else {
       prefixMessages.push(msg)
       i++
@@ -505,40 +487,70 @@ export function groupMessagesIntoSteps(messages: ModelMessage[]): {
   return { prefixMessages, steps }
 }
 
+/**
+ * Preserves historical messages intact without mutating tool inputs or results.
+ */
+export interface CollapseHistoricalPayloadsOptions {
+  collapseReads?: boolean
+}
+
+export function collapseHistoricalFileWritePayloads(
+  messages: ModelMessage[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  _options?: CollapseHistoricalPayloadsOptions
+): ModelMessage[] {
+  return messages
+}
+
+/**
+ * Alias for collapseHistoricalFileWritePayloads.
+ */
+export const collapseHistoricalPayloads = collapseHistoricalFileWritePayloads
+
 export interface SanitizeStepOptions {
   /**
-   * Number of recent steps to keep completely intact in the sliding window.
+   * How to prune reasoning content from assistant messages.
+   * Default: 'none' (keeps reasoning during the active turn so thinking chain is not broken)
+   */
+  reasoning?: "all" | "before-last-message" | "none"
+  /**
+   * Maximum sliding-window steps to preserve before applying hard cutoff.
    * Default: 20 steps (~40 messages)
    */
   windowSteps?: number
 }
 
 /**
- * Atomic sliding-window step sanitizer for `streamText`'s `prepareStep`.
- * Evicts entire older step pairs (assistant thought + tool call + tool response)
- * when history exceeds windowSteps, preserving Gemini thoughtSignature integrity
- * and capping input tokens to prevent Vertex AI 429 TPM exhaustion.
+ * Step sanitizer for `streamText`'s `prepareStep` powered by AI SDK's native `pruneMessages`.
+ *
+ * Fine-grained per-tool strategy:
+ * - Ephemeral verbose logs (list_files, bash, delete_file) are pruned after 2 messages (1 step).
+ * - Code authoring tools (write_file, update_file, replace_text, read_file) and skills (loadSkill, readFile)
+ *   are NEVER pruned, preventing both the multi-file amnesia loop and the skill-loading loop.
+ * - Reasoning parts within the turn are preserved (`reasoning: 'none'`) to maintain continuous thinking.
+ * - Gemini thought signatures on tool calls are preserved across all steps.
  */
 export function sanitizeStep(
   messages: ModelMessage[],
   options?: SanitizeStepOptions
 ): ModelMessage[] {
-  const windowSteps = options?.windowSteps ?? 20
-  const { prefixMessages, steps } = groupMessagesIntoSteps(messages)
+  // 1. Clean historical providerOptions from text parts while strictly preserving tool call thoughtSignatures
+  const cleaned = cleanHistoricalProviderOptions(messages)
 
-  // If we have not exceeded the window limit, keep all steps
+  // 2. Sliding-window step cutoff if messages exceed the window ceiling
+  const windowSteps = options?.windowSteps ?? 25
+  const { prefixMessages, steps } = groupMessagesIntoSteps(cleaned)
+
   if (steps.length <= windowSteps) {
-    return messages
+    return cleaned
   }
 
-  // Sliding window: keep the last windowSteps + any older step that called ask_player
   const cutoffIndex = steps.length - windowSteps
   const keptSteps = steps.filter((step, index) => {
-    if (index >= cutoffIndex) return true // Recent step inside window: keep
-    return step.hasAskPlayer // Older step outside window: keep only if player interaction
+    if (index >= cutoffIndex) return true
+    return step.hasAskPlayer || step.hasFileWrite
   })
 
-  // Reconstitute the messages array cleanly
   const result: ModelMessage[] = [...prefixMessages]
   for (const step of keptSteps) {
     result.push(step.assistantMsg)

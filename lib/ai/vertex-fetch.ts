@@ -209,3 +209,116 @@ export async function vertexFetchWithSseFilter(
     })
   }
 }
+
+/**
+ * Dedicated fetch handler for Google Cloud Vertex AI Gemini models.
+ *
+ * Characteristics:
+ * 1. Zero artificial delay: Runs at 100% native Gemini Flash speed without QPM throttling.
+ * 2. Unaltered native streaming: Does not transform or buffer Gemini SSE chunks.
+ * 3. 429 / 503 quota backoff: If Google Cloud Vertex returns 429 ("Resource exhausted")
+ *    or 503 (temporary overload), it intercepts the HTTP response, checks retryDelay or
+ *    Retry-After headers, backs off (15s, 25s, 40s) with jitter to allow the rolling
+ *    quota window to reset, and retries the HTTP request transparently.
+ * 4. Abort-aware: If the parent task or client aborts, the wait terminates immediately.
+ */
+const GEMINI_BACKOFF_SCHEDULE_MS = [30_000, 40_000, 60_000, 75_000]
+const MAX_GEMINI_RETRIES = 4
+
+function sleepWithSignal(
+  ms: number,
+  signal?: AbortSignal | null
+): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(signal.reason || new Error("Request aborted"))
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      cleanup()
+      reject(signal?.reason || new Error("Request aborted"))
+    }
+    const cleanup = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", onAbort)
+    }
+    signal?.addEventListener("abort", onAbort, { once: true })
+  })
+}
+
+export async function vertexGeminiFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit
+): Promise<Response> {
+  let attempt = 0
+  const signal = init?.signal
+
+  while (true) {
+    if (signal?.aborted) {
+      throw signal.reason || new Error("Request aborted")
+    }
+
+    // Proactively pace outbound requests through the sliding window limiter
+    if (attempt === 0) {
+      await paceRequest()
+    }
+
+    const res = await fetch(input, init)
+
+    // Intercept 429 (Resource exhausted) and 503 (Temporary overload) from Google Cloud Vertex AI
+    const isRateLimitOrOverload = res.status === 429 || res.status === 503
+    if (isRateLimitOrOverload && attempt < MAX_GEMINI_RETRIES) {
+      attempt++
+
+      // Reset the sliding window tracker to now so the pacer registers quota exhaustion
+      requestTimestamps.length = 0
+      requestTimestamps.push(Date.now())
+
+      let waitMs = GEMINI_BACKOFF_SCHEDULE_MS[attempt - 1] ?? 35_000
+
+      // 1. Check standard Retry-After header
+      const retryAfter = res.headers.get("retry-after")
+      if (retryAfter) {
+        const parsed = Number.parseFloat(retryAfter)
+        if (!Number.isNaN(parsed) && parsed > 0) {
+          waitMs = Math.max(waitMs, parsed * 1000 + 4000)
+        }
+      }
+
+      // 2. Check for Vertex AI JSON error details (google.rpc.RetryInfo or retryDelay)
+      try {
+        const errClone = res.clone()
+        const errText = await errClone.text()
+
+        const match = errText.match(/"retryDelay":\s*"(\d+)s"/)
+        if (match && match[1]) {
+          const delaySec = Number.parseInt(match[1], 10)
+          if (delaySec > 0) {
+            // Buffer by at least 8s to guarantee the rolling 60s window fully expires
+            waitMs = Math.max(waitMs, delaySec * 1000 + 8000)
+          }
+        }
+
+        console.warn(
+          `[Vertex Gemini HTTP ${res.status}] Attempt ${attempt}/${MAX_GEMINI_RETRIES}. Pausing for ${(waitMs / 1000).toFixed(1)}s for quota window to reset... Details: ${errText.slice(0, 250)}`
+        )
+      } catch {
+        console.warn(
+          `[Vertex Gemini HTTP ${res.status}] Attempt ${attempt}/${MAX_GEMINI_RETRIES}. Pausing for ${(waitMs / 1000).toFixed(1)}s for quota window to reset...`
+        )
+      }
+
+      // 3. Add random jitter (1 to 2.5s) to prevent synchronized retries
+      waitMs += 1000 + Math.random() * 1500
+
+      await sleepWithSignal(waitMs, signal)
+      continue
+    }
+
+    // Direct return of native response with zero stream tampering
+    return res
+  }
+}

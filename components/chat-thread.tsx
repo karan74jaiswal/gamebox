@@ -6,7 +6,6 @@ import { useChat } from "@ai-sdk/react"
 import {
   isToolUIPart,
   getToolName,
-  lastAssistantMessageIsCompleteWithToolCalls,
   type UIMessage,
 } from "ai"
 import * as Sentry from "@sentry/nextjs"
@@ -26,6 +25,58 @@ import {
   useInitialPrompt,
   useReconciledMessages,
 } from "./chat"
+
+/**
+ * Determines whether useChat should automatically submit messages.
+ * STRICT: Only returns true when the user has answered an interactive `ask_player` question.
+ * NEVER auto-submits for backend tools (read_file, write_file, verify_game, loadSkill, etc.)
+ * and NEVER auto-submits when a turn was stopped, aborted, or concluded.
+ */
+function shouldSendAutomatically({
+  messages,
+}: {
+  messages: UIMessage[]
+}): boolean {
+  const lastMessage = messages[messages.length - 1]
+  if (!lastMessage || lastMessage.role !== "assistant") {
+    return false
+  }
+
+  // Never auto-send if the turn was stopped/aborted
+  if (
+    lastMessage.metadata &&
+    (lastMessage.metadata as { isStopped?: boolean }).isStopped
+  ) {
+    return false
+  }
+
+  // Find the last step
+  const lastStepStartIndex = lastMessage.parts.reduce(
+    (lastIndex, part, index) => (part.type === "step-start" ? index : lastIndex),
+    -1
+  )
+
+  const lastStepParts = lastMessage.parts.slice(lastStepStartIndex + 1)
+  const lastStepTools = lastStepParts.filter(isToolUIPart)
+
+  if (lastStepTools.length === 0) {
+    return false
+  }
+
+  // Only auto-send if the last step has an answered `ask_player` tool call
+  const hasAnsweredAskPlayer = lastStepTools.some(
+    (part) =>
+      getToolName(part) === "ask_player" &&
+      (part.state === "output-available" || Boolean("output" in part && part.output))
+  )
+
+  // If there's already a text part after tools in this step, the turn is closed; do not resend
+  const hasSubsequentText = lastStepParts.some(
+    (part) => part.type === "text" && typeof (part as { text?: unknown }).text === "string"
+  )
+
+  return hasAnsweredAskPlayer && !hasSubsequentText
+}
 
 export {
   AskPlayerQuestionnaire,
@@ -101,6 +152,24 @@ export function ChatThread({
   // Reference will be populated once messages are defined below
   const flushCodeUpdateRef = React.useRef<() => void>(() => {})
 
+  const lastInitialMessage =
+    initialMessages && initialMessages.length > 0
+      ? initialMessages[initialMessages.length - 1]
+      : undefined
+  const isLastInitialMessageStopped = Boolean(
+    (lastInitialMessage?.metadata as { isStopped?: boolean })?.isStopped ||
+      (lastInitialMessage?.parts &&
+        Array.isArray(lastInitialMessage.parts) &&
+        lastInitialMessage.parts.some(
+          (p) =>
+            p.type === "text" &&
+            typeof (p as { text?: unknown }).text === "string" &&
+            (p as { text: string }).text.includes(
+              "[Generation was cancelled by user]"
+            )
+        ))
+  )
+
   const {
     messages,
     sendMessage,
@@ -114,8 +183,12 @@ export function ChatThread({
     id,
     messages: initialMessages,
     transport,
-    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
-    resume: Boolean(initialMessages && initialMessages.length > 0),
+    sendAutomaticallyWhen: shouldSendAutomatically,
+    resume: Boolean(
+      initialMessages &&
+        initialMessages.length > 0 &&
+        !isLastInitialMessageStopped
+    ),
     onError: (err) => {
       Sentry.logger.error("Client chat turn error", {
         chatId: id || "unknown",
@@ -312,6 +385,35 @@ export function ChatThread({
         if (!hasText && !hasToolParts) {
           return prev.slice(0, -1)
         }
+
+        const parts = [...(last.parts || [])]
+        const lastPart = parts[parts.length - 1]
+        const alreadyHasClosure =
+          lastPart?.type === "text" &&
+          typeof (lastPart as { text?: unknown }).text === "string" &&
+          (lastPart as { text: string }).text.includes(
+            "[Generation was cancelled by user]"
+          )
+
+        if (!alreadyHasClosure) {
+          parts.push({
+            type: "text",
+            text: "\n\n[Generation was cancelled by user]",
+            state: "done" as const,
+          })
+        }
+
+        return [
+          ...prev.slice(0, -1),
+          {
+            ...last,
+            parts,
+            metadata: {
+              ...((last.metadata || {}) as Record<string, unknown>),
+              isStopped: true,
+            },
+          },
+        ]
       }
       return prev
     })

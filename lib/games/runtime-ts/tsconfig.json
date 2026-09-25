@@ -14,5 +14,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["**/*.ts", "**/*.d.ts"]
+  "include": ["**/*.ts", "**/*.d.ts"],
+  "exclude": ["vite.config.ts"]
 }

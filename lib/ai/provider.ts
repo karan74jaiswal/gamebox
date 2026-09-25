@@ -7,7 +7,7 @@ import { openai } from "@ai-sdk/openai"
 import { gateway, type LanguageModel } from "ai"
 
 import { resolveModel, DEFAULT_MODEL_ID } from "./models"
-import { vertexFetchWithSseFilter } from "./vertex-fetch"
+import { vertexFetchWithSseFilter, vertexGeminiFetch } from "./vertex-fetch"
 
 let vertexInstance: ReturnType<typeof createVertex> | null = null
 let vertexAnthropicInstance: ReturnType<typeof createVertexAnthropic> | null = null
@@ -81,6 +81,7 @@ function getVertex(): ReturnType<typeof createVertex> {
   vertexInstance = createVertex({
     project,
     location,
+    fetch: vertexGeminiFetch,
     ...(googleAuthOptions ? { googleAuthOptions } : {}),
   })
 

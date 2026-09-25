@@ -1,22 +1,33 @@
 import { locals, logger } from "@trigger.dev/sdk"
 import { chat, upsertIncomingMessage } from "@trigger.dev/sdk/ai"
-import { stepCountIs, type UIMessage } from "ai"
+import {
+  convertToModelMessages,
+  isToolUIPart,
+  stepCountIs,
+  type ModelMessage,
+  type ToolSet,
+  type UIMessage,
+} from "ai"
 import { eq } from "drizzle-orm"
 import { z } from "zod"
 import * as Sentry from "@sentry/node"
 
 import { getLanguageModel } from "@/lib/ai/provider"
 import { sanitizeContext } from "@/lib/ai/sanitizer"
-import { isAbortError, type ResolvedError } from "@/lib/ai/errors"
+import {
+  isAbortError,
+  isRetryableQuotaError,
+  type ResolvedError,
+} from "@/lib/ai/errors"
 import { resolveError } from "@/lib/ai/errors.server"
 import { DEFAULT_MODEL_ID } from "@/lib/ai/models"
 import { checkAndSyncOrgCredits, OUT_OF_CREDITS_MESSAGE } from "@/lib/credits"
 import { getInitialPromptText } from "@/lib/games/title"
 import { instructions } from "@/lib/games/instructions"
 import { db, games, withDbRetry } from "@/lib/db"
-import { getGameSandbox } from "@/lib/daytona/utils"
+import { GAME_DIR, getGameSandbox } from "@/lib/daytona/utils"
 import { tools, setGameChatContext } from "@/lib/games/tools"
-import { reconcileTurnMessages } from "@/lib/ai/messages"
+import { reconcileTurnMessages, upsertMessage } from "@/lib/ai/messages"
 import { getGameSkills } from "./game-skills"
 import {
   chargeStepCredits,
@@ -30,9 +41,120 @@ const rawStreamErrorKey = locals.create<string>("game-chat.rawStreamError")
 const resolvedErrorKey = locals.create<ResolvedError>("game-chat.resolvedError")
 const orgIdKey = locals.create<string>("game-chat.orgId")
 
+/**
+ * Prepares the model messages and response state for retrying a turn after a mid-stream failure.
+ * Crucially guarantees that the conversation strictly terminates with a user or tool turn.
+ * Google Gemini / Vertex AI strictly rejects requests ending with an assistant (model) turn:
+ * "Requests ending with a model turn are not supported."
+ */
+async function prepareRetryContext(params: {
+  sanitizedMessages: ModelMessage[]
+  lastResponseMessage?: UIMessage
+  tools?: ToolSet
+}): Promise<{
+  modelMessages: ModelMessage[]
+  retryMessage?: UIMessage
+}> {
+  const { sanitizedMessages, lastResponseMessage, tools } = params
+
+  if (
+    !lastResponseMessage ||
+    !Array.isArray(lastResponseMessage.parts) ||
+    lastResponseMessage.parts.length === 0
+  ) {
+    return {
+      modelMessages: sanitizedMessages,
+      retryMessage: undefined,
+    }
+  }
+
+  // Find the index of the last completed tool invocation (state === "output-available")
+  let lastCompletedToolIdx = -1
+  for (let i = lastResponseMessage.parts.length - 1; i >= 0; i--) {
+    const p = lastResponseMessage.parts[i]
+    if (isToolUIPart(p) && p.state === "output-available") {
+      lastCompletedToolIdx = i
+      break
+    }
+  }
+
+  // If no tools completed in this turn, discard the partial assistant message
+  // and retry cleanly from the start of the turn (sanitizedMessages).
+  if (lastCompletedToolIdx === -1) {
+    return {
+      modelMessages: sanitizedMessages,
+      retryMessage: undefined,
+    }
+  }
+
+  // Keep only the parts up to the last completed tool
+  const trimmedMessage: UIMessage = {
+    ...lastResponseMessage,
+    parts: lastResponseMessage.parts.slice(0, lastCompletedToolIdx + 1),
+  }
+
+  const converted = await convertToModelMessages([trimmedMessage], {
+    ignoreIncompleteToolCalls: true,
+    ...(tools ? { tools } : {}),
+  })
+
+  // Strip any trailing assistant messages so the request strictly ends with role: "tool"
+  while (
+    converted.length > 0 &&
+    converted[converted.length - 1].role === "assistant"
+  ) {
+    converted.pop()
+  }
+
+  return {
+    modelMessages: [...sanitizedMessages, ...converted],
+    retryMessage: trimmedMessage,
+  }
+}
+
 export const gameChat = chat.agent({
   id: "game-chat",
   tools,
+
+  compaction: {
+    shouldCompact: ({ totalTokens }) => (totalTokens ?? 0) > 60_000,
+    summarize: async ({ chatId }) => {
+      try {
+        if (!chatId) {
+          return "Game development turn completed. Code state persisted in sandbox."
+        }
+        const sandbox = await getGameSandbox(chatId)
+        const gitStatus = await sandbox.git.status(GAME_DIR)
+        const modifiedFiles = gitStatus.fileStatus?.map((f) => f.name) ?? []
+
+        let activePlanSummary = ""
+        try {
+          const planBuf = await sandbox.fs.downloadFile(
+            `${GAME_DIR}/artifacts/game-plan.md`
+          )
+          const planText = planBuf.toString("utf-8")
+          if (planText) {
+            activePlanSummary = `\n- Active Plan: ${planText.slice(0, 500)}...`
+          }
+        } catch {
+          // Plan file might not exist yet in turn 1
+        }
+
+        return [
+          "### Verified Turn Summary (Grounded via Daytona Git & FS)",
+          modifiedFiles.length > 0
+            ? `- Files Modified/Created: ${modifiedFiles.join(", ")}`
+            : "- Files on disk verified and unchanged.",
+          "- Working directory: /home/daytona/game",
+          activePlanSummary,
+        ]
+          .filter(Boolean)
+          .join("\n")
+      } catch {
+        return "Game development turn completed. Code state persisted in Daytona sandbox."
+      }
+    },
+  },
 
   clientDataSchema: z.object({
     model: z.string().optional(),
@@ -125,7 +247,9 @@ export const gameChat = chat.agent({
     locals.set(rawStreamErrorKey, undefined)
     locals.set(resolvedErrorKey, undefined)
     setGameChatContext(chatId)
-    chat.skills.set(await getGameSkills())
+
+    const resolvedSkills = await getGameSkills()
+    chat.skills.set(resolvedSkills)
 
     const orgId = clientData?.orgId || locals.get(orgIdKey)
     if (orgId) {
@@ -289,6 +413,33 @@ export const gameChat = chat.agent({
     )
 
     chat.history.set(finalMessages)
+
+    // Checkpoint turn changes in Git so status reflects only current-turn modifications
+    try {
+      const sandbox = await getGameSandbox(chatId)
+      const status = await sandbox.git.status(GAME_DIR)
+      const hasChanges = Boolean(
+        status.fileStatus && status.fileStatus.length > 0
+      )
+      if (hasChanges) {
+        await sandbox.git.add(GAME_DIR, ["."])
+        const commitRes = await sandbox.git.commit(
+          GAME_DIR,
+          `Turn checkpoint: ${finishReason || "completed"}`,
+          "Gamebox",
+          "bot@gamebox.dev",
+          false
+        )
+        logger.info(
+          `Git checkpoint committed for game ${chatId}: ${commitRes.sha}`
+        )
+      }
+    } catch (gitErr) {
+      logger.warn(`Turn git checkpoint skipped or failed for game ${chatId}`, {
+        error: gitErr instanceof Error ? gitErr.message : String(gitErr),
+      })
+    }
+
     logger.info(
       `==================== [TURN COMPLETE] (Chat: ${chatId} | Finish: ${finishReason || "unknown"}) ====================`
     )
@@ -349,75 +500,243 @@ export const gameChat = chat.agent({
       }
     )
 
-    return streamText({
-      model: selectedModel,
-      tools,
-      instructions,
-      messages: sanitizedMessages,
-      abortSignal: signal,
+    const MAX_TURN_RETRIES = 3
+    let currentModelMessages = sanitizedMessages
+    let lastError: unknown
+    let lastResponseMessage: UIMessage | undefined
 
-      onLanguageModelCallStart: (event) => {
-        const rawInstructions = event.instructions
-        const systemPromptText =
-          typeof rawInstructions === "string"
-            ? rawInstructions
-            : Array.isArray(rawInstructions)
-              ? rawInstructions
-                  .map((m) =>
-                    typeof m === "object" && m && "content" in m
-                      ? String(m.content)
-                      : JSON.stringify(m)
-                  )
-                  .join("\n\n---\n\n")
-              : typeof rawInstructions === "object" &&
-                  rawInstructions &&
-                  "content" in rawInstructions
-                ? String((rawInstructions as { content: unknown }).content)
-                : JSON.stringify(rawInstructions)
+    for (let attempt = 0; attempt < MAX_TURN_RETRIES; attempt++) {
+      if (signal?.aborted) {
+        break
+      }
 
-        const toolNames = event.tools
-          ? event.tools
-              .map((t) => (t as { name?: string }).name)
-              .filter(Boolean)
-          : []
+      try {
+        const result = streamText({
+          model: selectedModel,
+          tools,
+          instructions,
+          messages: currentModelMessages,
+          abortSignal: signal,
 
-        logger.info(
-          `==================== [LLM CALL: ACTUAL RUNTIME PROMPT & TOOLS] (Chat: ${chatId}) ====================`,
+          onLanguageModelCallStart: (event) => {
+            const rawInstructions = event.instructions
+            const systemPromptText =
+              typeof rawInstructions === "string"
+                ? rawInstructions
+                : Array.isArray(rawInstructions)
+                  ? rawInstructions
+                      .map((m) =>
+                        typeof m === "object" && m && "content" in m
+                          ? String(m.content)
+                          : JSON.stringify(m)
+                      )
+                      .join("\n\n---\n\n")
+                  : typeof rawInstructions === "object" &&
+                      rawInstructions &&
+                      "content" in rawInstructions
+                    ? String((rawInstructions as { content: unknown }).content)
+                    : JSON.stringify(rawInstructions)
+
+            const toolNames = event.tools
+              ? event.tools
+                  .map((t) => (t as { name?: string }).name)
+                  .filter(Boolean)
+              : []
+
+            logger.info(
+              `==================== [LLM CALL: ACTUAL RUNTIME PROMPT & TOOLS] (Chat: ${chatId} | Attempt: ${attempt + 1}) ====================`,
+              {
+                attempt: attempt + 1,
+                provider: event.provider,
+                modelId: event.modelId,
+                callId: event.callId,
+                systemPrompt: systemPromptText,
+                rawInstructions,
+                toolNames,
+                toolsCount: toolNames.length,
+                messagesCount: event.messages?.length ?? 0,
+              }
+            )
+          },
+
+          stopWhen: stepCountIs(100),
+          maxRetries: 4,
+
+          prepareStep: async ({ messages: stepMessages, steps }) =>
+            prepareStepContext({ messages: stepMessages, steps, chatId }),
+
+          onStepFinish: async (step) =>
+            chargeStepCredits(step, { orgId, chatId, modelId }),
+
+          providerOptions: {
+            vertex: {
+              thinkingConfig: {
+                includeThoughts: true,
+              },
+            },
+
+            google: {
+              thinkingConfig: {
+                includeThoughts: true,
+              },
+            },
+          },
+        })
+
+        const pipeResult = await chat.pipeAndCapture(result, {
+          signal,
+          originalMessages: lastResponseMessage
+            ? upsertMessage(chat.history.all(), lastResponseMessage)
+            : chat.history.all(),
+        })
+
+        if (pipeResult.message) {
+          lastResponseMessage = pipeResult.message
+        }
+
+        // Check if user manually stopped or aborted the turn
+        if (
+          signal?.aborted ||
+          chat.isStopped() ||
+          pipeResult.status === "aborted"
+        ) {
+          if (lastResponseMessage) {
+            chat.history.set(
+              upsertMessage(chat.history.all(), lastResponseMessage)
+            )
+          }
+          return
+        }
+
+        // Detect whether the turn encountered an error (even if pipeResult.status was "complete"
+        // because toUIMessageStream absorbed the error via uiMessageStreamOptions.onError)
+        const streamError = locals.get(streamErrorKey)
+        const rawStreamError = locals.get(rawStreamErrorKey)
+        const storedResolvedError = locals.get(resolvedErrorKey)
+
+        const isErrorFinish =
+          pipeResult.status === "error" ||
+          pipeResult.finishReason === "error" ||
+          pipeResult.finishReason === "other" ||
+          Boolean(pipeResult.error) ||
+          Boolean(streamError) ||
+          Boolean(storedResolvedError)
+
+        if (!isErrorFinish && pipeResult.status === "complete") {
+          // True successful completion!
+          if (lastResponseMessage) {
+            chat.history.set(
+              upsertMessage(chat.history.all(), lastResponseMessage)
+            )
+          }
+          return
+        }
+
+        // An error occurred during streaming (e.g. Vertex AI mid-stream quota cut)
+        lastError =
+          pipeResult.error ||
+          rawStreamError ||
+          streamError ||
+          (pipeResult.finishReason
+            ? new Error(
+                `Stream terminated prematurely with finishReason: ${pipeResult.finishReason}`
+              )
+            : new Error("Stream interrupted"))
+
+        const isQuotaOrInterrupted =
+          isRetryableQuotaError(lastError, pipeResult.finishReason) ||
+          storedResolvedError?.category === "rate_limit"
+
+        if (!isQuotaOrInterrupted || attempt >= MAX_TURN_RETRIES - 1) {
+          if (lastResponseMessage) {
+            const cleaned = chat.cleanupAbortedParts(lastResponseMessage)
+            chat.history.set(upsertMessage(chat.history.all(), cleaned))
+          }
+          if (lastError) throw lastError
+          return
+        }
+
+        // Clear error locals so the retry attempt starts with a clean slate
+        locals.set(streamErrorKey, undefined)
+        locals.set(rawStreamErrorKey, undefined)
+        locals.set(resolvedErrorKey, undefined)
+
+        // Mid-stream quota exhaustion or stream interruption encountered!
+        const waitSec = 20 + attempt * 5
+        logger.warn(
+          `Vertex AI mid-stream rate-limit/interruption encountered (attempt ${attempt + 1}/${MAX_TURN_RETRIES}). Pausing ${waitSec}s to replenish quota before automatically continuing...`,
           {
-            provider: event.provider,
-            modelId: event.modelId,
-            callId: event.callId,
-            systemPrompt: systemPromptText,
-            rawInstructions,
-            toolNames,
-            toolsCount: toolNames.length,
-            messagesCount: event.messages?.length ?? 0,
+            chatId,
+            attempt: attempt + 1,
+            finishReason: pipeResult.finishReason,
+            error:
+              lastError instanceof Error
+                ? lastError.message
+                : String(lastError),
           }
         )
-      },
 
-      stopWhen: stepCountIs(100),
-      maxRetries: 4,
-
-      prepareStep: async ({ messages: stepMessages, steps }) =>
-        prepareStepContext(stepMessages, steps.length + 1),
-
-      onStepFinish: async (step) =>
-        chargeStepCredits(step, { orgId, chatId, modelId }),
-
-      providerOptions: {
-        vertex: {
-          thinkingConfig: {
-            includeThoughts: true,
+        // Show user-friendly status in UI without exposing quota/rate-limit internals
+        chat.response.write({
+          type: "data-step-status",
+          id: "step-status",
+          data: {
+            text: "Preparing next step...",
           },
-        },
+          transient: true,
+        })
 
-        google: {
-          thinkingConfig: {
-            includeThoughts: true,
+        await new Promise((r) => setTimeout(r, waitSec * 1000))
+
+        const { modelMessages, retryMessage } = await prepareRetryContext({
+          sanitizedMessages,
+          lastResponseMessage,
+          tools,
+        })
+        lastResponseMessage = retryMessage
+        currentModelMessages = modelMessages
+      } catch (err) {
+        lastError = err
+        if (signal?.aborted) break
+        const isQuotaOrInterrupted = isRetryableQuotaError(err)
+        if (!isQuotaOrInterrupted || attempt >= MAX_TURN_RETRIES - 1) {
+          throw err
+        }
+
+        // Clear error locals on retry
+        locals.set(streamErrorKey, undefined)
+        locals.set(rawStreamErrorKey, undefined)
+        locals.set(resolvedErrorKey, undefined)
+
+        const waitSec = 20 + attempt * 5
+        logger.warn(
+          `Vertex AI call threw retryable error (attempt ${attempt + 1}/${MAX_TURN_RETRIES}). Waiting ${waitSec}s...`,
+          { error: err instanceof Error ? err.message : String(err) }
+        )
+
+        chat.response.write({
+          type: "data-step-status",
+          id: "step-status",
+          data: {
+            text: "Preparing next step...",
           },
-        },
-      },
-    })
+          transient: true,
+        })
+
+        await new Promise((r) => setTimeout(r, waitSec * 1000))
+
+        const { modelMessages, retryMessage } = await prepareRetryContext({
+          sanitizedMessages,
+          lastResponseMessage,
+          tools,
+        })
+        lastResponseMessage = retryMessage
+        currentModelMessages = modelMessages
+      }
+    }
+
+    if (lastError) {
+      throw lastError
+    }
   },
 })

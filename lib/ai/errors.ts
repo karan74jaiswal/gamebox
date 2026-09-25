@@ -509,3 +509,48 @@ export function resolveError(
 export function sanitizeErrorMessage(error: unknown): string {
   return resolveError(error).userMessage
 }
+
+/**
+ * Detects whether an error represents a temporary Google Cloud / Vertex AI / provider rate limit,
+ * quota exhaustion (HTTP 429 / RESOURCE_EXHAUSTED), or mid-stream socket termination that is safe
+ * to retry after a quota window cooldown.
+ */
+export function isRetryableQuotaError(
+  error: unknown,
+  finishReason?: string
+): boolean {
+  if (isAbortError(error)) return false
+
+  const resolved = resolveError(error, finishReason)
+  if (resolved.category === "rate_limit") return true
+  if (
+    resolved.code === "RESOURCE_EXHAUSTED" ||
+    resolved.code === "RATE_LIMIT_EXCEEDED" ||
+    resolved.code === "QUOTA_EXCEEDED"
+  ) {
+    return true
+  }
+  if (resolved.statusCode === 429) return true
+
+  // Mid-stream connection drops / stream interruptions
+  if (
+    resolved.code === "PROVIDER_STREAM_INTERRUPTED" ||
+    resolved.errorType === "UnexpectedTerminationError"
+  ) {
+    return true
+  }
+
+  const raw = extractRawMessage(error).toLowerCase()
+  return (
+    raw.includes("resource exhausted") ||
+    raw.includes("resource_exhausted") ||
+    raw.includes("429") ||
+    raw.includes("quota") ||
+    raw.includes("rate limit") ||
+    raw.includes("terminated stream unexpectedly") ||
+    raw.includes("socket hang up") ||
+    raw.includes("premature close") ||
+    raw.includes("fetch failed") ||
+    raw.includes("econnreset")
+  )
+}

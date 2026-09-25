@@ -516,8 +516,8 @@ export function ChatPreview({
                 "h-full w-full border-0 bg-background transition-opacity duration-300",
                 isIframeLoaded ? "opacity-100" : "opacity-0"
               )}
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen; gamepad"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads allow-pointer-lock"
               onLoad={() => {
                 if (reloadTimeoutRef.current) {
                   clearTimeout(reloadTimeoutRef.current)

@@ -114,17 +114,41 @@ export function reconcileTurnMessages(params: {
   if (wasStopped) {
     // If user stopped/cancelled the turn:
     // If assistant message has no meaningful content, remove it so only the user message remains
-    // If assistant message has partial content, preserve it cleanly
+    // If assistant message has partial content, preserve it cleanly and mark it as stopped
     if (lastMsg?.role === "assistant") {
       if (!hasContent) {
         finalMessages.pop()
       } else {
+        const finalizedParts = finalizeMessageParts(
+          lastMsg.parts,
+          "Generation was cancelled."
+        )
+
+        // If the last part is a tool call or step-start (no trailing text part),
+        // append an explicit closure text part so the message is clearly closed
+        // and does not appear to be an active turn awaiting tool execution.
+        const lastPart = finalizedParts[finalizedParts.length - 1]
+        const endsWithIncompleteStep =
+          lastPart && (isToolUIPart(lastPart) || lastPart.type === "step-start")
+
+        const partsWithClosure = endsWithIncompleteStep
+          ? [
+              ...finalizedParts,
+              {
+                type: "text" as const,
+                text: "[Generation was cancelled by user]",
+                state: "done" as const,
+              },
+            ]
+          : finalizedParts
+
         finalMessages[lastIdx] = {
           ...lastMsg,
-          parts: finalizeMessageParts(
-            lastMsg.parts,
-            "Generation was cancelled."
-          ),
+          metadata: {
+            ...(lastMsg.metadata as object),
+            isStopped: true,
+          },
+          parts: partsWithClosure,
         }
       }
     }
@@ -169,5 +193,44 @@ export function reconcileTurnMessages(params: {
     }
   }
 
-  return finalMessages
+  return deduplicateMessagesById(finalMessages)
+}
+
+/**
+ * Deduplicates an array of UIMessages by their unique ID,
+ * keeping the latest/most complete version if multiple messages share the same ID.
+ */
+export function deduplicateMessagesById(messages: UIMessage[]): UIMessage[] {
+  const seenIds = new Set<string>()
+  const deduplicated: UIMessage[] = []
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg.id) {
+      if (!seenIds.has(msg.id)) {
+        seenIds.add(msg.id)
+        deduplicated.unshift(msg)
+      }
+    } else {
+      deduplicated.unshift(msg)
+    }
+  }
+
+  return deduplicated
+}
+
+/**
+ * Updates an existing message in the array if matching by ID, or appends it if new.
+ */
+export function upsertMessage(
+  messages: UIMessage[],
+  message: UIMessage
+): UIMessage[] {
+  const idx = messages.findIndex((m) => m.id === message.id)
+  if (idx >= 0) {
+    const updated = [...messages]
+    updated[idx] = message
+    return updated
+  }
+  return [...messages, message]
 }

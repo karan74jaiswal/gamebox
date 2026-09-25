@@ -3,6 +3,7 @@ import { tool } from "ai"
 import { z } from "zod"
 import { locals } from "@trigger.dev/sdk"
 import type { Sandbox } from "@daytona/sdk"
+import { LspLanguageId } from "@daytona/sdk"
 import * as Sentry from "@sentry/node"
 import { GAME_DIR, getGameSandbox } from "@/lib/daytona/utils"
 
@@ -206,26 +207,84 @@ export const replaceTextInputSchema = z.object({
     ),
 })
 
+/**
+ * Extracts exported TypeScript/JavaScript types, interfaces, classes, functions, and public methods.
+ * Generates an ultra-compact summary (<150 tokens) to inspect contracts without loading entire file bodies.
+ */
+export function extractFileOutline(content: string, filePath: string): string {
+  if (!content.trim()) return `// File '${filePath}' is empty (0 lines)`
+  const lines = content.split(/\r?\n/)
+  const outlineLines: string[] = [
+    `// Outline of ${filePath} (${lines.length} total lines):`,
+  ]
+
+  const DECLARATION_REGEX =
+    /^\s*(export\s+(?:default\s+)?(?:type|interface|class|enum|const|let|var|function|async\s+function)|public\s+|private\s+|protected\s+|(?:async\s+)?(?:\w+)\s*\([^)]*\)\s*(?::\s*[^{;]+)?)/
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const trimmed = line.trim()
+    if (
+      !trimmed ||
+      trimmed.startsWith("//") ||
+      trimmed.startsWith("/*") ||
+      trimmed.startsWith("*")
+    ) {
+      continue
+    }
+
+    if (DECLARATION_REGEX.test(line)) {
+      let sig = trimmed.replace(/\s*\{.*$/, "").trim()
+      if (!sig.endsWith(";") && !sig.endsWith("{")) {
+        sig += ";"
+      }
+      outlineLines.push(`  L${i + 1}: ${sig}`)
+    }
+  }
+
+  if (outlineLines.length <= 1) {
+    return `// Outline of ${filePath} (${lines.length} lines) - No top-level class/interface/export declarations found.`
+  }
+
+  return outlineLines.slice(0, 60).join("\n")
+}
+
+export const inspectSymbolsInputSchema = z.object({
+  path: z
+    .string()
+    .describe(
+      "Relative path to the TypeScript/JavaScript file to inspect symbols for (e.g. 'player.ts', 'enemies.ts', 'game.ts')"
+    ),
+})
+
 export const readFileInputSchema = z.object({
   path: z
     .string()
     .describe(
       "Relative path to the file inside the game directory to read (e.g., 'index.html', 'game.ts')"
     ),
+  mode: z
+    .enum(["full", "outline"])
+    .optional()
+    .describe(
+      "Read mode: 'full' (default) reads actual code lines; 'outline' extracts exported types, interfaces, classes, and method signatures in ~100-150 tokens without loading the entire file body."
+    ),
   startLine: z
     .number()
     .int()
     .min(1)
-    .default(1)
-    .describe("The starting line number to read (1-indexed). Defaults to 1."),
+    .optional()
+    .describe(
+      "The starting line number to read (1-indexed). Omit to read from line 1."
+    ),
   lineCount: z
     .number()
     .int()
     .min(1)
-    .max(500)
-    .default(300)
+    .max(2000)
+    .optional()
     .describe(
-      "The number of lines to read starting from startLine. Strictly between 1 and 500 lines (enforced by schema). Defaults to 300."
+      "The number of lines to read starting from startLine (max 2,000 lines). Omit to read the entire file if under 2,000 lines."
     ),
   endLine: z
     .number()
@@ -334,6 +393,24 @@ export const askPlayerOutputSchema = z.object({
 
 export type AskPlayerOutput = z.infer<typeof askPlayerOutputSchema>
 
+const PLACEHOLDER_PATTERN =
+  /\[(?:persisted to disk|existing code|rest of code|unchanged|TODO|stub)[^\]]*\]|\/\/\s*\.\.\.\s*(?:rest of code|existing code|unchanged)/i
+
+function validateNoPlaceholderContent(
+  content: string,
+  path: string
+): { success: false; path: string; error: string } | null {
+  const match = content.match(PLACEHOLDER_PATTERN)
+  if (match) {
+    return {
+      success: false,
+      path,
+      error: `Rejected: The provided content contains a placeholder pattern ('${match[0]}'). Never write placeholder comments, stubs, or collapsed metadata strings to disk. Provide the complete, actual TypeScript source code.`,
+    }
+  }
+  return null
+}
+
 // ==========================================
 // Tool Implementations
 // ==========================================
@@ -368,6 +445,11 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
             path: relativePath,
             error: `File exceeds the 2,500-line limit (${lines} lines). Keep files modular (under 128,000 characters) to avoid output token exhaustion. Scaffold a working foundation first, then add features modularly or via targeted updates.`,
           }
+        }
+
+        const placeholderCheck = validateNoPlaceholderContent(content, relativePath)
+        if (placeholderCheck) {
+          return placeholderCheck
         }
 
         const parentDir = path.posix.dirname(fullPath)
@@ -446,6 +528,11 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         const fileLines =
           existingContent.length === 0 ? [] : existingContent.split(/\r?\n/)
         const originalTotalLines = fileLines.length
+
+        const placeholderCheck = validateNoPlaceholderContent(content, relativePath)
+        if (placeholderCheck) {
+          return placeholderCheck
+        }
 
         let updatedContent: string
         let linesAffected = 0
@@ -596,6 +683,11 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         }
       }
 
+      const placeholderCheck = validateNoPlaceholderContent(targetNewText, filePath)
+      if (placeholderCheck) {
+        return placeholderCheck
+      }
+
       try {
         const { fullPath, relativePath } = resolveGamePath(filePath)
         const sandbox = await resolveSandbox()
@@ -693,15 +785,34 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const read_file = tool({
     description:
-      "Read a targeted range of lines from a file inside the Daytona sandbox game directory (/home/daytona/game). Use list_files to check total line counts first, then provide startLine and lineCount (max 500 lines per window).",
+      "Read a file inside the Daytona sandbox game directory (/home/daytona/game). If startLine and lineCount are omitted, reads the entire file (up to 2,000 lines in a single operation). Pass mode: 'outline' to extract types, interfaces, classes, and method signatures in ~100-150 tokens without reading full implementation bodies.",
     inputSchema: readFileInputSchema,
-    execute: async ({ path: filePath, startLine, lineCount, endLine }) => {
+    execute: async ({
+      path: filePath,
+      mode = "full",
+      startLine,
+      lineCount,
+      endLine,
+    }) => {
       try {
         const { fullPath, relativePath } = resolveGamePath(filePath)
         const sandbox = await resolveSandbox()
 
         const buffer = await sandbox.fs.downloadFile(fullPath)
         const rawContent = buffer.toString("utf-8")
+
+        if (mode === "outline") {
+          const outline = extractFileOutline(rawContent, relativePath)
+          return {
+            success: true,
+            path: relativePath,
+            mode: "outline",
+            totalLines:
+              rawContent.length === 0 ? 0 : rawContent.split(/\r?\n/).length,
+            outline,
+            message: `Extracted interface outline for '${relativePath}'.`,
+          }
+        }
 
         const allLines =
           rawContent.length === 0 ? [] : rawContent.split(/\r?\n/)
@@ -722,27 +833,28 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           }
         }
 
-        const effectiveStart = Math.max(1, startLine)
+        const effectiveStart = Math.max(1, startLine ?? 1)
 
         if (effectiveStart > totalLines) {
           return {
             success: false,
             path: relativePath,
-            error: `startLine (${effectiveStart}) exceeds total lines in '${relativePath}' (${totalLines} lines). Use list_files to check file sizes and line counts.`,
+            error: `startLine (${effectiveStart}) exceeds total lines in '${relativePath}' (${totalLines} lines). Use list_files to check file sizes.`,
           }
         }
 
-        // Determine requested count: prioritize lineCount if provided, otherwise compute from endLine
+        // Determine requested count: prioritize lineCount if provided, otherwise compute from endLine.
+        // If neither is provided, read the entire file up to 2,000 lines (un-chunked default).
         let count = lineCount
         if (count === undefined && typeof endLine === "number") {
           count = Math.max(1, endLine - effectiveStart + 1)
         }
         if (count === undefined) {
-          count = 300
+          count = Math.min(2000, totalLines - effectiveStart + 1)
         }
 
-        // Enforce hard maximum ceiling of 500 lines
-        const effectiveCount = Math.min(Math.max(1, count), 500)
+        // Enforce maximum ceiling of 2,000 lines per window
+        const effectiveCount = Math.min(Math.max(1, count), 2000)
         const effectiveEnd = Math.min(
           effectiveStart + effectiveCount - 1,
           totalLines
@@ -773,6 +885,74 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           success: false,
           path: filePath,
           error: `Failed to read '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+        }
+      }
+    },
+  })
+
+  const inspect_symbols = tool({
+    description:
+      "Inspect TypeScript/JavaScript symbols (classes, interfaces, functions, methods, and line numbers) for a file inside the Daytona sandbox game directory (/home/daytona/game) using Daytona's native Language Server Protocol (LSP). Use this before editing dependent files to inspect exact method names and signatures in ~100 tokens without loading full file bodies.",
+    inputSchema: inspectSymbolsInputSchema,
+    execute: async ({ path: filePath }) => {
+      try {
+        const { fullPath, relativePath } = resolveGamePath(filePath)
+        const sandbox = await resolveSandbox()
+
+        // 1. Attempt Daytona native TypeScript Language Server Protocol (LSP)
+        try {
+          const lsp = await sandbox.createLspServer(
+            LspLanguageId.TYPESCRIPT,
+            GAME_DIR
+          )
+          await lsp.start()
+          await lsp.didOpen(fullPath)
+          const symbols = await lsp.documentSymbols(fullPath)
+          await lsp.didClose(fullPath).catch(() => {})
+
+          if (Array.isArray(symbols) && symbols.length > 0) {
+            const formatted = symbols
+              .slice(0, 50)
+              .map(
+                (s) =>
+                  `- [${s.kind}] ${s.name}${s.location ? ` (${JSON.stringify(s.location)})` : ""}`
+              )
+              .join("\n")
+
+            return {
+              success: true,
+              path: relativePath,
+              source: "daytona-lsp",
+              symbolsCount: symbols.length,
+              symbols: formatted,
+            }
+          }
+        } catch (lspErr) {
+          Sentry.logger.warn(
+            "Daytona LSP symbol extraction fell back to AST outline",
+            {
+              path: relativePath,
+              error: lspErr instanceof Error ? lspErr.message : String(lspErr),
+            }
+          )
+        }
+
+        // 2. Resilient fallback: download file and extract structural outline
+        const buffer = await sandbox.fs.downloadFile(fullPath)
+        const content = buffer.toString("utf-8")
+        const outline = extractFileOutline(content, relativePath)
+
+        return {
+          success: true,
+          path: relativePath,
+          source: "ast-outline",
+          symbols: outline,
+        }
+      } catch (error) {
+        return {
+          success: false,
+          path: filePath,
+          error: `Failed to inspect symbols for '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
         }
       }
     },
@@ -952,11 +1132,50 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     outputSchema: askPlayerOutputSchema,
   })
 
+  const verify_game = tool({
+    description:
+      "Run TypeScript compiler check (tsc --noEmit) inside the Daytona sandbox game directory (/home/daytona/game). Validates syntax, interface compliance, type signatures, and import integrity across all game files. Returns compiler errors with exact file names and line numbers so you can surgically fix them. MANDATORY: Call this tool after writing or updating files and fix any reported errors before completing your turn.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      try {
+        const sandbox = await resolveSandbox()
+        const result = await sandbox.process.executeCommand(
+          `cd "${GAME_DIR}" && npm run typecheck`
+        )
+        const output = result.result?.trim() || ""
+        const hasErrors = result.exitCode !== 0 || output.includes("error TS")
+
+        if (!hasErrors) {
+          return {
+            success: true,
+            message:
+              "Verification passed! All game files compiled with 0 TypeScript errors.",
+          }
+        }
+
+        return {
+          success: false,
+          exitCode: result.exitCode,
+          errors: output,
+          instruction:
+            "TypeScript compiler found syntax or type errors. Inspect the file names and line numbers above and use replace_text or update_file to fix them before concluding your turn.",
+        }
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
+    },
+  })
+
   return {
     write_file,
     update_file,
     replace_text,
     read_file,
+    inspect_symbols,
+    verify_game,
     list_files,
     delete_file,
     ask_player,
@@ -970,6 +1189,8 @@ export const write_file = defaultTools.write_file
 export const update_file = defaultTools.update_file
 export const replace_text = defaultTools.replace_text
 export const read_file = defaultTools.read_file
+export const inspect_symbols = defaultTools.inspect_symbols
+export const verify_game = defaultTools.verify_game
 export const list_files = defaultTools.list_files
 export const delete_file = defaultTools.delete_file
 export const ask_player = defaultTools.ask_player
@@ -979,6 +1200,8 @@ export const tools = {
   update_file,
   replace_text,
   read_file,
+  inspect_symbols,
+  verify_game,
   list_files,
   delete_file,
   ask_player,

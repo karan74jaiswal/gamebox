@@ -1,4 +1,4 @@
-import { logger } from "@trigger.dev/sdk"
+import { locals, logger } from "@trigger.dev/sdk"
 import { chat } from "@trigger.dev/sdk/ai"
 import type { FinishReason, ModelMessage, StepResult } from "ai"
 import { eq } from "drizzle-orm"
@@ -105,22 +105,84 @@ export function logTurnFailure(params: {
   )
 }
 
+export interface TurnTokenMetrics {
+  cumulativeInputTokens: number
+  cumulativeOutputTokens: number
+  cumulativeTotalTokens: number
+  stepCount: number
+}
+
 /**
- * Sanitizes and logs the message context window for each execution step.
+ * Run-scoped token metrics key using Trigger.dev locals.
+ * Scoped strictly to the active run and automatically garbage-collected upon turn completion.
  */
-export function prepareStepContext(
-  stepMessages: ModelMessage[],
-  stepNumber: number
-): { messages: ModelMessage[] } {
-  const sanitized = sanitizeStep(stepMessages, { windowSteps: 22 })
+export const turnTokensKey = locals.create<TurnTokenMetrics>(
+  "game-chat.turnTokens"
+)
+
+const WRITE_TOOLS = new Set([
+  "write_file",
+  "update_file",
+  "replace_text",
+  "delete_file",
+  "execute_command",
+  "bash",
+])
+
+/**
+ * Sanitizes and logs the message context window for each execution step,
+ * pacing consecutive multi-step calls adaptively based on AI SDK StepResult.
+ */
+export async function prepareStepContext(params: {
+  messages: ModelMessage[]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  steps: StepResult<any>[]
+  chatId?: string
+}): Promise<{ messages: ModelMessage[] }> {
+  const { messages: stepMessages, steps, chatId } = params
+  const stepNumber = steps.length + 1
+
+  const sanitized = sanitizeStep(stepMessages, { windowSteps: 25 })
+
+  let totalChars = 0
+  for (const m of sanitized) {
+    totalChars +=
+      typeof m.content === "string"
+        ? m.content.length
+        : JSON.stringify(m.content).length
+  }
+  const estimatedInputTokens = Math.round(totalChars / 4)
+
+  // Adaptive pacing between consecutive multi-step tool calls:
+  // Scales with payload size to prevent exhausting Vertex AI rolling 60s TPM quota:
+  // - Base: 1500ms after writes, 800ms after reads
+  // - Heavy payloads (>20k tokens): 2000ms; (>35k tokens): 3000ms to allow quota window to drain
+  let pacingMs = 0
+  if (steps.length > 0) {
+    const lastStep = steps[steps.length - 1]
+    const isWrite =
+      lastStep?.toolCalls?.some((tc) => WRITE_TOOLS.has(tc.toolName)) ?? false
+    pacingMs = isWrite ? 1500 : 800
+
+    if (estimatedInputTokens > 35000) {
+      pacingMs = Math.max(pacingMs, 3000)
+    } else if (estimatedInputTokens > 20000) {
+      pacingMs = Math.max(pacingMs, 2000)
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pacingMs))
+  }
 
   logger.info(
-    `-------------------- [STEP ${stepNumber}: LLM PAYLOAD] (Turn Step: ${stepNumber}) --------------------`,
+    `-------------------- [STEP ${stepNumber}: PRE-CALL CONTEXT & TOKEN ESTIMATE] (Chat: ${chatId || "unknown"}) --------------------`,
     {
       stepNumber,
+      pacingMs,
       totalMessages: sanitized.length,
       rawStepMessagesCount: stepMessages.length,
-      messages: sanitized,
+      payloadChars: totalChars,
+      estimatedInputTokens,
+      chatId,
     }
   )
 
@@ -130,8 +192,8 @@ export function prepareStepContext(
 }
 
 /**
- * Calculates step token cost, records it in the credit ledger, and emits
- * real-time credit updates to the connected client.
+ * Calculates step token cost, records it in the credit ledger, tracks cumulative tokens
+ * via Trigger.dev run-scoped locals, and emits real-time credit updates to the client.
  */
 export async function chargeStepCredits(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,7 +213,54 @@ export async function chargeStepCredits(
     return
   }
 
+  const { usage } = step
+  const inputTokens = usage.inputTokens ?? 0
+  const outputTokens = usage.outputTokens ?? 0
+  const totalTokens = usage.totalTokens ?? inputTokens + outputTokens
+  const reasoningTokens = usage.outputTokenDetails?.reasoningTokens ?? 0
+  const cacheReadTokens = usage.inputTokenDetails?.cacheReadTokens ?? 0
+  const cacheWriteTokens = usage.inputTokenDetails?.cacheWriteTokens ?? 0
+
+  // Track cumulative token totals for the turn using Trigger.dev run-scoped locals
+  let turnTotals = locals.get(turnTokensKey)
+  if (!turnTotals || step.stepNumber === 0) {
+    turnTotals = {
+      cumulativeInputTokens: 0,
+      cumulativeOutputTokens: 0,
+      cumulativeTotalTokens: 0,
+      stepCount: 0,
+    }
+  }
+
+  turnTotals = {
+    cumulativeInputTokens: turnTotals.cumulativeInputTokens + inputTokens,
+    cumulativeOutputTokens: turnTotals.cumulativeOutputTokens + outputTokens,
+    cumulativeTotalTokens: turnTotals.cumulativeTotalTokens + totalTokens,
+    stepCount: step.stepNumber + 1,
+  }
+  locals.set(turnTokensKey, turnTotals)
+
   const stepAmount = calculateStepAmount(step, modelId)
+
+  logger.info(
+    `==================== [STEP ${step.stepNumber + 1} TOKEN METRICS] (Chat: ${chatId}) ====================`,
+    {
+      step: step.stepNumber + 1,
+      modelId,
+      stepInputTokens: inputTokens,
+      stepOutputTokens: outputTokens,
+      stepReasoningTokens: reasoningTokens,
+      stepCacheReadTokens: cacheReadTokens,
+      stepCacheWriteTokens: cacheWriteTokens,
+      stepTotalTokens: totalTokens,
+      cumulativeTurnTokens: turnTotals.cumulativeTotalTokens,
+      cumulativeInputTokens: turnTotals.cumulativeInputTokens,
+      cumulativeOutputTokens: turnTotals.cumulativeOutputTokens,
+      costNanoDollars: stepAmount.toString(),
+      stepResponseId,
+    }
+  )
+
   if (stepAmount <= BigInt(0)) {
     return
   }
@@ -176,13 +285,17 @@ export async function chargeStepCredits(
         credits: formattedBalance,
         stepResponseId,
         amount: stepAmount.toString(),
+        tokens: {
+          step: step.stepNumber + 1,
+          inputTokens,
+          outputTokens,
+          reasoningTokens,
+          totalTokens,
+          cumulativeTokens: turnTotals.cumulativeTotalTokens,
+        },
       },
       transient: true,
     })
-
-    logger.info(
-      `Charged step ${step.stepNumber + 1} (${stepResponseId}): cost = ${stepAmount.toString()} nano-dollars, new balance = ${formattedBalance}`
-    )
   } catch (chargeErr) {
     Sentry.logger.error("Failed to charge step in game chat", {
       chatId,

@@ -87,6 +87,16 @@ async function buildSnapshot() {
     )
     console.log(installResult.result?.trim() || "Dependencies installed.")
 
+    console.log(
+      "\nStep 3.6/5: Initializing Git repository and template seed commit..."
+    )
+    const gitInitResult = await sandbox.process.executeCommand(
+      `cd "${GAME_DIR}" && git init && git config user.name "Gamebox" && git config user.email "bot@gamebox.dev" && git add -A && git commit -m "initial template seed"`
+    )
+    console.log(
+      gitInitResult.result?.trim() || "Git initialized with initial commit."
+    )
+
     console.log("\nStep 4/5: Stopping sandbox for cold snapshot capture...")
     await sandbox.stop()
     console.log(" Sandbox stopped.")
