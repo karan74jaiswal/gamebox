@@ -402,9 +402,32 @@ export function cleanHistoricalProviderOptions(
         return cleanPart
       }
 
-      // NOTE: For tool calls, we MUST preserve providerOptions (including Gemini thoughtSignature)
-      // across all steps. Dropping thoughtSignature causes Google Vertex AI to disable thoughts
-      // for all subsequent steps in the conversation.
+      // For tool calls:
+      // Preserve existing thought signatures, or inject Google's documented sentinel
+      // 'skip_thought_signature_validator' if missing, preventing 400 Bad Request on replay.
+      if (part.type === "tool-call") {
+        const googleOpts = (part.providerOptions?.google ?? {}) as Record<
+          string,
+          unknown
+        >
+        const sig =
+          (googleOpts.signature || googleOpts.thoughtSignature) as
+            | string
+            | undefined || "skip_thought_signature_validator"
+
+        return {
+          ...part,
+          providerOptions: {
+            ...part.providerOptions,
+            google: {
+              ...googleOpts,
+              signature: sig,
+              thoughtSignature: sig,
+            },
+          },
+        }
+      }
+
       return part
     })
 
@@ -541,8 +564,41 @@ export function sanitizeStep(
   const windowSteps = options?.windowSteps ?? 25
   const { prefixMessages, steps } = groupMessagesIntoSteps(cleaned)
 
+  // 3. Early-exit reasoning pruning:
+  // Iterate only until 3 completed reasoning steps are encountered.
+  // As soon as 3 are found, exit early and prune reasoning from the first (oldest) one.
+  const reasoningStepIndices: number[] = []
+  for (let i = 0; i < steps.length; i++) {
+    const content = steps[i].assistantMsg.content
+    if (Array.isArray(content) && content.some((p) => p.type === "reasoning")) {
+      reasoningStepIndices.push(i)
+      if (reasoningStepIndices.length === 3) {
+        break // Early exit: we have found 3 completed reasoning steps
+      }
+    }
+  }
+
+  if (reasoningStepIndices.length === 3) {
+    const firstReasoningStepIndex = reasoningStepIndices[0]
+    const step = steps[firstReasoningStepIndex]
+    const [pruned] = pruneMessages({
+      messages: [step.assistantMsg],
+      reasoning: "all",
+      toolCalls: "none",
+    })
+    if (pruned) {
+      step.assistantMsg = pruned
+    }
+  }
+
+  // 4. Reassemble messages with preserved tool calls and thoughtSignatures
   if (steps.length <= windowSteps) {
-    return cleaned
+    const result: ModelMessage[] = [...prefixMessages]
+    for (const step of steps) {
+      result.push(step.assistantMsg)
+      result.push(...step.toolMessages)
+    }
+    return result
   }
 
   const cutoffIndex = steps.length - windowSteps

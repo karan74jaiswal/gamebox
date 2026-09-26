@@ -263,37 +263,6 @@ export const readFileInputSchema = z.object({
     .describe(
       "Relative path to the file inside the game directory to read (e.g., 'index.html', 'game.ts')"
     ),
-  mode: z
-    .enum(["full", "outline"])
-    .optional()
-    .describe(
-      "Read mode: 'full' (default) reads actual code lines; 'outline' extracts exported types, interfaces, classes, and method signatures in ~100-150 tokens without loading the entire file body."
-    ),
-  startLine: z
-    .number()
-    .int()
-    .min(1)
-    .optional()
-    .describe(
-      "The starting line number to read (1-indexed). Omit to read from line 1."
-    ),
-  lineCount: z
-    .number()
-    .int()
-    .min(1)
-    .max(2000)
-    .optional()
-    .describe(
-      "The number of lines to read starting from startLine (max 2,000 lines). Omit to read the entire file if under 2,000 lines."
-    ),
-  endLine: z
-    .number()
-    .int()
-    .min(1)
-    .optional()
-    .describe(
-      "Optional alias for ending line. If provided without lineCount, lineCount will be calculated automatically."
-    ),
 })
 
 export const listFilesInputSchema = z.object({
@@ -727,7 +696,7 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
           return {
             success: false,
             path: relativePath,
-            error: `oldText not found in '${relativePath}'.${hint} Please use read_file with startLine and lineCount to inspect the exact formatting, or use update_file with mode 'replace_lines'.`,
+            error: `oldText not found in '${relativePath}'.${hint} Please use read_file to inspect the exact formatting, or use update_file with mode 'replace_lines'.`,
           }
         }
 
@@ -785,106 +754,34 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
   const read_file = tool({
     description:
-      "Read a file inside the Daytona sandbox game directory (/home/daytona/game). If startLine and lineCount are omitted, reads the entire file (up to 2,000 lines in a single operation). Pass mode: 'outline' to extract types, interfaces, classes, and method signatures in ~100-150 tokens without reading full implementation bodies.",
+      "Read the full contents of a file inside the Daytona sandbox game directory (/home/daytona/game). Use this to inspect existing code, styles, or configuration before making modifications or when debugging.",
     inputSchema: readFileInputSchema,
-    execute: async ({
-      path: filePath,
-      mode = "full",
-      startLine,
-      lineCount,
-      endLine,
-    }) => {
+    execute: async ({ path: filePath }) => {
       try {
         const { fullPath, relativePath } = resolveGamePath(filePath)
         const sandbox = await resolveSandbox()
 
         const buffer = await sandbox.fs.downloadFile(fullPath)
-        const rawContent = buffer.toString("utf-8")
-
-        if (mode === "outline") {
-          const outline = extractFileOutline(rawContent, relativePath)
-          return {
-            success: true,
-            path: relativePath,
-            mode: "outline",
-            totalLines:
-              rawContent.length === 0 ? 0 : rawContent.split(/\r?\n/).length,
-            outline,
-            message: `Extracted interface outline for '${relativePath}'.`,
-          }
-        }
-
-        const allLines =
-          rawContent.length === 0 ? [] : rawContent.split(/\r?\n/)
-        const totalLines = allLines.length
-
-        if (totalLines === 0) {
-          return {
-            success: true,
-            path: relativePath,
-            startLine: 1,
-            endLine: 0,
-            lineCount: 0,
-            totalLines: 0,
-            linesRead: 0,
-            truncated: false,
-            content: "",
-            message: `File '${relativePath}' is empty (0 lines).`,
-          }
-        }
-
-        const effectiveStart = Math.max(1, startLine ?? 1)
-
-        if (effectiveStart > totalLines) {
-          return {
-            success: false,
-            path: relativePath,
-            error: `startLine (${effectiveStart}) exceeds total lines in '${relativePath}' (${totalLines} lines). Use list_files to check file sizes.`,
-          }
-        }
-
-        // Determine requested count: prioritize lineCount if provided, otherwise compute from endLine.
-        // If neither is provided, read the entire file up to 2,000 lines (un-chunked default).
-        let count = lineCount
-        if (count === undefined && typeof endLine === "number") {
-          count = Math.max(1, endLine - effectiveStart + 1)
-        }
-        if (count === undefined) {
-          count = Math.min(2000, totalLines - effectiveStart + 1)
-        }
-
-        // Enforce maximum ceiling of 2,000 lines per window
-        const effectiveCount = Math.min(Math.max(1, count), 2000)
-        const effectiveEnd = Math.min(
-          effectiveStart + effectiveCount - 1,
-          totalLines
-        )
-
-        const selectedLines = allLines.slice(effectiveStart - 1, effectiveEnd)
-        const content = selectedLines.join("\n")
-
-        const truncated = effectiveEnd < totalLines
-        const remainingLines = totalLines - effectiveEnd
+        const content = buffer.toString("utf-8")
+        const totalLines =
+          content.length === 0 ? 0 : content.split(/\r?\n/).length
 
         return {
           success: true,
           path: relativePath,
-          startLine: effectiveStart,
-          endLine: effectiveEnd,
-          lineCount: selectedLines.length,
-          totalLines,
-          linesRead: selectedLines.length,
-          truncated,
-          ...(truncated
-            ? { remainingLines, nextStartLine: effectiveEnd + 1 }
-            : {}),
           content,
+          totalLines,
         }
       } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        Sentry.logger.error("Sandbox read_file failed", {
+          path: filePath,
+          error: errorMsg,
+        })
         return {
           success: false,
           path: filePath,
-          error: `Failed to read '${filePath}': ${error instanceof Error ? error.message : String(error)}`,
+          error: `Failed to read '${filePath}': ${errorMsg}`,
         }
       }
     },

@@ -80,10 +80,9 @@ disk. Every path is relative to the game directory ("index.html",
   Returns exported classes, methods, and functions with exact TypeScript signatures
   in under 120 tokens. Call this when coordinating cross-file changes (e.g., checking
   player methods before editing enemies or game loop) instead of reading the entire file.
-- read_file — a file's current contents. Reads the full file in one operation by default (up to 2,000 lines).
+- read_file — a file's current contents. Reads the full file in one operation.
   Read before you edit: the game is whatever earlier turns left on disk, and editing
-  from memory of what you wrote is how working code gets clobbered. You can also pass
-  \`mode: "outline"\` to extract interfaces and structure.
+  from memory of what you wrote is how working code gets clobbered.
 - write_file — create a file, or replace one whole. Pass the entire file, not
   a fragment; parent directories are made for you.
 - replace_text — change part of a file. Prefer it over rewriting: copy the

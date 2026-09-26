@@ -266,6 +266,8 @@ export function formatToolDisplay(
                 ? ` of ${typed.totalLines}`
                 : ""
             sizeInfo = ` (lines ${typed.startLine}–${typed.endLine}${total})`
+          } else if (typeof typed.totalLines === "number") {
+            sizeInfo = ` (${typed.totalLines.toLocaleString()} lines)`
           } else if (typeof typed.content === "string") {
             sizeInfo = ` (${countLines(typed.content).toLocaleString()} lines)`
           }

@@ -135,26 +135,64 @@ interface ProviderHandler {
   gatewayId: (modelName: string) => string
 }
 
+/**
+ * Resolves Google Gemini models following strict user priority:
+ * 1. Google AI Studio (@ai-sdk/google via GOOGLE_GENERATIVE_AI_API_KEY / GOOGLE_API_KEY)
+ *    - 1,000+ RPM, full 1M+ context window, uses GCP credits via linked billing project.
+ *    - Uses standard global fetch with zero artificial pacer delays.
+ * 2. Vercel AI Gateway (gateway("google/...") via AI_GATEWAY_API_KEY)
+ *    - Uses standard global fetch with zero artificial pacer delays.
+ * 3. Google Cloud Vertex AI (@ai-sdk/google-vertex via Service Account credentials)
+ *    - 3rd priority / last fallback.
+ *    - Uses vertexGeminiFetch with quota pacing and backoff to survive strict Vertex baseline quotas.
+ */
+function resolveGoogleModel(modelName: string): LanguageModel {
+  // Priority 1: Google AI Studio direct API key forced onto Gemini Interactions API (/v1beta/interactions)
+  // Has 1,000+ RPM, full 1M+ context window, and uses GCP developer credits via linked billing
+  if (process.env.GOOGLE_GENERATIVE_AI_API_KEY || process.env.GOOGLE_API_KEY) {
+    return google.interactions(modelName)
+  }
+
+  // Priority 2: Vercel AI Gateway
+  if (process.env.AI_GATEWAY_API_KEY) {
+    return gateway(`google/${modelName}`)
+  }
+
+  // Priority 3: Google Cloud Vertex AI (fallback)
+  if (hasVertexCredentials()) {
+    return getVertex()(modelName)
+  }
+
+  // Default fallback to Gemini Interactions API
+  return google.interactions(modelName)
+}
+
 const PROVIDER_HANDLERS: Record<string, ProviderHandler> = {
   google: {
     hasOwnKey: () =>
       Boolean(
-        hasVertexCredentials() ||
         process.env.GOOGLE_GENERATIVE_AI_API_KEY ||
-        process.env.GOOGLE_API_KEY
+        process.env.GOOGLE_API_KEY ||
+        process.env.AI_GATEWAY_API_KEY ||
+        hasVertexCredentials()
       ),
-    createDirect: (modelName: string) => {
-      // Prioritize Google Cloud Vertex AI (uses GCP promotional credits)
-      if (hasVertexCredentials()) {
-        return getVertex()(modelName)
-      }
-      return google(modelName)
-    },
+    createDirect: (modelName: string) => resolveGoogleModel(modelName),
     gatewayId: (modelName: string) => `google/${modelName}`,
   },
   xai: {
-    hasOwnKey: () => Boolean(process.env.XAI_API_KEY || hasVertexCredentials()),
+    hasOwnKey: () =>
+      Boolean(
+        process.env.XAI_API_KEY ||
+        process.env.AI_GATEWAY_API_KEY ||
+        hasVertexCredentials()
+      ),
     createDirect: (modelName: string) => {
+      if (process.env.XAI_API_KEY) {
+        return gateway(`xai/${modelName}`)
+      }
+      if (process.env.AI_GATEWAY_API_KEY) {
+        return gateway(`xai/${modelName}`)
+      }
       if (hasVertexCredentials()) {
         const fullModelId = modelName.startsWith("xai/")
           ? modelName
@@ -167,10 +205,17 @@ const PROVIDER_HANDLERS: Record<string, ProviderHandler> = {
   },
   anthropic: {
     hasOwnKey: () =>
-      Boolean(process.env.ANTHROPIC_API_KEY || hasVertexCredentials()),
+      Boolean(
+        process.env.ANTHROPIC_API_KEY ||
+        process.env.AI_GATEWAY_API_KEY ||
+        hasVertexCredentials()
+      ),
     createDirect: (modelName: string) => {
       if (process.env.ANTHROPIC_API_KEY) {
         return anthropic(modelName)
+      }
+      if (process.env.AI_GATEWAY_API_KEY) {
+        return gateway(`anthropic/${modelName}`)
       }
       if (hasVertexCredentials()) {
         return getVertexAnthropic()(modelName)
@@ -198,7 +243,7 @@ const PROVIDER_HANDLERS: Record<string, ProviderHandler> = {
 
 /**
  * Resolves a language model instance using the canonical model definitions in lib/ai/models.ts.
- * Checks for direct provider credentials (e.g. Vertex AI), falling back
+ * Checks for direct provider credentials (e.g. Google AI Studio, Vertex AI), falling back
  * to Vercel AI Gateway when direct keys are not set.
  */
 export function getLanguageModel(
@@ -218,10 +263,7 @@ export function getLanguageModel(
     target === "gemini-2.5-pro"
   ) {
     const modelName = target.includes("/") ? target.split("/")[1] : target
-    const handler = PROVIDER_HANDLERS.google
-    return handler.hasOwnKey()
-      ? handler.createDirect(modelName)
-      : gateway(`google/${modelName}`)
+    return resolveGoogleModel(modelName)
   }
 
   const modelOption = resolveModel(target)

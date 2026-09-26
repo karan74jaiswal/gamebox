@@ -117,7 +117,7 @@ export const gameChat = chat.agent({
   tools,
 
   compaction: {
-    shouldCompact: ({ totalTokens }) => (totalTokens ?? 0) > 60_000,
+    shouldCompact: ({ totalTokens }) => (totalTokens ?? 0) > 1_000_000,
     summarize: async ({ chatId }) => {
       try {
         if (!chatId) {
@@ -576,9 +576,13 @@ export const gameChat = chat.agent({
             },
 
             google: {
+              // Stateless multi-turn: preserves local step pruning and compaction without server-side context conflicts
+              store: false,
               thinkingConfig: {
                 includeThoughts: true,
               },
+              thinkingLevel: "high",
+              thinkingSummaries: "auto",
             },
           },
         })
