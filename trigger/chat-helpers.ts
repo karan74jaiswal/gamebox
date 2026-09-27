@@ -142,7 +142,7 @@ export async function prepareStepContext(params: {
   const { messages: stepMessages, steps, chatId } = params
   const stepNumber = steps.length + 1
 
-  const sanitized = sanitizeStep(stepMessages, { windowSteps: 25 })
+  const sanitized = sanitizeStep(stepMessages)
 
   let totalChars = 0
   for (const m of sanitized) {

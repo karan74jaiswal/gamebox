@@ -322,10 +322,154 @@ function pruneTokensFromMessage(
   return message
 }
 
+function normalizeFilePath(p: unknown): string {
+  if (typeof p !== "string") return ""
+  return p.trim().replace(/^[./\\]+/, "").toLowerCase()
+}
+
+function getFilePathFromToolCall(part: ToolCallPart): string | undefined {
+  if (
+    typeof part.input === "object" &&
+    part.input !== null &&
+    "path" in part.input
+  ) {
+    const raw = (part.input as { path?: unknown }).path
+    const norm = normalizeFilePath(raw)
+    return norm.length > 0 ? norm : undefined
+  }
+  return undefined
+}
+
 /**
- * Sanitizes and prunes conversation messages using the official Vercel AI SDK `pruneMessages` API.
- * Eliminates context bloat from historical tool calls and ephemeral reasoning while
- * preserving valid tool call/result invariants and matching IDs.
+ * Atomically filters model messages so that only tool calls in `allowedToolCallIds`
+ * (and their corresponding tool results) are retained. Empty assistant/tool messages are dropped.
+ */
+function filterMessagesByAllowedToolCalls(
+  messages: ModelMessage[],
+  allowedToolCallIds: Set<string>,
+  options?: { removeReasoning?: boolean }
+): ModelMessage[] {
+  const result: ModelMessage[] = []
+
+  for (const message of messages) {
+    if (message.role === "user") {
+      result.push(message)
+      continue
+    }
+
+    if (message.role === "tool") {
+      if (typeof message.content === "string") {
+        result.push(message)
+        continue
+      }
+      const filteredParts = message.content.filter(
+        (part) =>
+          part.type !== "tool-result" || allowedToolCallIds.has(part.toolCallId)
+      )
+      if (filteredParts.length > 0) {
+        result.push({ ...message, content: filteredParts } as ModelMessage)
+      }
+      continue
+    }
+
+    if (message.role === "assistant") {
+      if (typeof message.content === "string") {
+        result.push(message)
+        continue
+      }
+
+      const filteredParts = message.content.filter((part) => {
+        if (part.type === "reasoning" && options?.removeReasoning) {
+          return false
+        }
+        if (part.type === "tool-call") {
+          return allowedToolCallIds.has(part.toolCallId)
+        }
+        return true
+      })
+
+      if (filteredParts.length > 0) {
+        result.push({ ...message, content: filteredParts } as ModelMessage)
+      }
+      continue
+    }
+
+    result.push(message)
+  }
+
+  return result
+}
+
+/**
+ * Resolves tool calls to keep for the most recent 1-2 turns:
+ * 1. For each file touched, maintains at most 1 tool call representing its latest full content (write_file or read_file).
+ * 2. If update_file, replace_text, or delete_file was the last operation on a file, no tool call for that file is kept
+ *    so the model is forced to call read_file on demand rather than relying on stale code.
+ * 3. Ephemeral tools (verify_game, inspect_symbols, loadSkill, bash, readFile) are pruned.
+ * 4. Active ask_player tool calls are preserved.
+ */
+function resolveCrossTurnKeptToolCallIds(messages: ModelMessage[]): Set<string> {
+  const allowed = new Set<string>()
+  const fileOperations = new Map<
+    string,
+    Array<{ toolCallId: string; toolName: string }>
+  >()
+
+  for (const message of messages) {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) {
+      continue
+    }
+
+    for (const part of message.content) {
+      if (part.type !== "tool-call") continue
+
+      if (part.toolName === "ask_player") {
+        allowed.add(part.toolCallId)
+        continue
+      }
+
+      if (
+        part.toolName === "write_file" ||
+        part.toolName === "read_file" ||
+        part.toolName === "update_file" ||
+        part.toolName === "replace_text" ||
+        part.toolName === "delete_file"
+      ) {
+        const filePath = getFilePathFromToolCall(part)
+        if (filePath) {
+          if (!fileOperations.has(filePath)) {
+            fileOperations.set(filePath, [])
+          }
+          fileOperations.get(filePath)!.push({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+          })
+        }
+      }
+    }
+  }
+
+  for (const [, events] of fileOperations.entries()) {
+    if (events.length === 0) continue
+    const lastEvent = events[events.length - 1]
+
+    if (
+      lastEvent.toolName === "write_file" ||
+      lastEvent.toolName === "read_file"
+    ) {
+      allowed.add(lastEvent.toolCallId)
+    }
+  }
+
+  return allowed
+}
+
+/**
+ * Sanitizes conversation messages for cross-turn context:
+ * - Completed historical ask_player interactions are compacted into clean Q&A text.
+ * - Turns before the last 2 turns are pruned to user prompt + assistant text only via AI SDK pruneMessages.
+ * - In the last 2 turns, keeps at most 1 tool call per unique file path (latest write_file or read_file)
+ *   unless subsequently modified/deleted, purging ephemeral compiler checks and reasoning.
  */
 export function sanitizeContext(
   messages: ModelMessage[],
@@ -340,35 +484,71 @@ export function sanitizeContext(
   const historyWithCompactedQuestions =
     compactHistoricalAskPlayerCalls(messages)
 
-  // 2. Leverage official AI SDK pruneMessages to prune all historical tool calls and reasoning.
-  // The architectural memory of previous turns is preserved on disk in the sandbox artifacts/.
-  let pruned = pruneMessages({
-    messages: historyWithCompactedQuestions,
-    reasoning: options?.reasoning ?? "all",
-    toolCalls: options?.toolCalls ?? "before-last-message",
-    emptyMessages: options?.emptyMessages ?? "remove",
-  })
+  // 2. Identify turns by user message boundaries
+  const userIndices: number[] = []
+  for (let i = 0; i < historyWithCompactedQuestions.length; i++) {
+    if (historyWithCompactedQuestions[i].role === "user") {
+      userIndices.push(i)
+    }
+  }
 
-  // 3. Prune custom token / tag patterns if configured
+  let cleanedOlder: ModelMessage[] = []
+  let recentMessages = historyWithCompactedQuestions
+
+  // If there are more than 2 completed turns, split before the 2nd previous completed turn.
+  // The last message may be the incoming user prompt for the current turn.
+  const isIncomingTurn =
+    historyWithCompactedQuestions.length > 0 &&
+    historyWithCompactedQuestions[historyWithCompactedQuestions.length - 1]
+      .role === "user"
+
+  const completedUserIndices = isIncomingTurn
+    ? userIndices.slice(0, -1)
+    : userIndices
+
+  // Turns before the last 2 completed turns are pruned to user prompt + assistant text only.
+  if (completedUserIndices.length > 2) {
+    const splitIndex = completedUserIndices[completedUserIndices.length - 2]
+    const olderMessages = historyWithCompactedQuestions.slice(0, splitIndex)
+    recentMessages = historyWithCompactedQuestions.slice(splitIndex)
+
+    cleanedOlder = pruneMessages({
+      messages: olderMessages,
+      reasoning: "all",
+      toolCalls: "all",
+      emptyMessages: "remove",
+    })
+  }
+
+  // 3. For the last 2 turns: keep at most 1 tool call per file (latest write_file or read_file)
+  // unless subsequently modified/deleted. Prune ephemeral compiler & LSP tools.
+  const allowedToolCallIds = resolveCrossTurnKeptToolCallIds(recentMessages)
+  const cleanedRecent = filterMessagesByAllowedToolCalls(
+    recentMessages,
+    allowedToolCallIds,
+    { removeReasoning: true }
+  )
+
+  let combined = [...cleanedOlder, ...cleanedRecent]
+
+  // 4. Prune custom token / tag patterns if configured
   const tokens = [...DEFAULT_PRUNED_TOKENS, ...(options?.tokensToPrune ?? [])]
   if (tokens.length > 0) {
-    pruned = pruned.map((message) => pruneTokensFromMessage(message, tokens))
+    combined = combined.map((message) => pruneTokensFromMessage(message, tokens))
   }
 
-  // 5. Strip historical providerOptions (such as Gemini thoughtSignature) from older turns and text parts
-  pruned = cleanHistoricalProviderOptions(pruned)
+  // 5. Ensure tool call thought signatures carry the skip_thought_signature_validator sentinel
+  combined = cleanHistoricalProviderOptions(combined)
 
   // 6. Guarantee that sanitized context NEVER terminates with a model/assistant turn.
-  // Google Gemini / Vertex AI strictly rejects requests ending with an assistant turn:
-  // "Requests ending with a model turn are not supported."
   while (
-    pruned.length > 0 &&
-    pruned[pruned.length - 1].role === "assistant"
+    combined.length > 0 &&
+    combined[combined.length - 1].role === "assistant"
   ) {
-    pruned.pop()
+    combined.pop()
   }
 
-  return pruned
+  return combined
 }
 
 /**
@@ -544,32 +724,215 @@ export interface SanitizeStepOptions {
 }
 
 /**
- * Step sanitizer for `streamText`'s `prepareStep` powered by AI SDK's native `pruneMessages`.
- *
- * Fine-grained per-tool strategy:
- * - Ephemeral verbose logs (list_files, bash, delete_file) are pruned after 2 messages (1 step).
- * - Code authoring tools (write_file, update_file, replace_text, read_file) and skills (loadSkill, readFile)
- *   are NEVER pruned, preventing both the multi-file amnesia loop and the skill-loading loop.
- * - Reasoning parts within the turn are preserved (`reasoning: 'none'`) to maintain continuous thinking.
- * - Gemini thought signatures on tool calls are preserved across all steps.
+ * Resolves tool calls to keep within the active turn's steps:
+ * 1. For each file, keeps the latest full copy (write_file or read_file) plus any update_file/replace_text that happened AFTER it.
+ * 2. If delete_file occurred, discards all earlier operations for that file, keeping the delete_file tool call.
+ * 3. If multiple verify_game checks ran, keeps only the latest verify_game compiler output.
+ * 4. For loadSkill, keeps the latest call per skill name so active skill guidance remains in context.
+ * 5. Preserves all other active in-turn tools (ask_player, list_files, inspect_symbols, bash, readFile, execute_command).
+ */
+function resolveStepKeptToolCallIds(steps: StepUnit[]): Set<string> {
+  const allowed = new Set<string>()
+  const fileEvents = new Map<
+    string,
+    Array<{ toolCallId: string; toolName: string; stepIndex: number }>
+  >()
+  const verifyGameCallIds: string[] = []
+  const skillEvents = new Map<string, string[]>()
+
+  for (let sIdx = 0; sIdx < steps.length; sIdx++) {
+    const step = steps[sIdx]
+    if (
+      step.assistantMsg.role !== "assistant" ||
+      !Array.isArray(step.assistantMsg.content)
+    )
+      continue
+
+    for (const part of step.assistantMsg.content) {
+      if (part.type !== "tool-call") continue
+
+      if (part.toolName === "verify_game") {
+        verifyGameCallIds.push(part.toolCallId)
+        continue
+      }
+
+      if (part.toolName === "loadSkill") {
+        const skillName =
+          typeof part.input === "object" &&
+          part.input !== null &&
+          "name" in part.input &&
+          typeof (part.input as { name?: unknown }).name === "string"
+            ? (part.input as { name: string }).name.trim().toLowerCase()
+            : "unknown_skill"
+
+        if (!skillEvents.has(skillName)) {
+          skillEvents.set(skillName, [])
+        }
+        skillEvents.get(skillName)!.push(part.toolCallId)
+        continue
+      }
+
+      if (
+        part.toolName === "write_file" ||
+        part.toolName === "read_file" ||
+        part.toolName === "update_file" ||
+        part.toolName === "replace_text" ||
+        part.toolName === "delete_file"
+      ) {
+        const filePath = getFilePathFromToolCall(part)
+        if (filePath) {
+          if (!fileEvents.has(filePath)) {
+            fileEvents.set(filePath, [])
+          }
+          fileEvents.get(filePath)!.push({
+            toolCallId: part.toolCallId,
+            toolName: part.toolName,
+            stepIndex: sIdx,
+          })
+          continue
+        }
+      }
+
+      // Keep all other tools active within the turn (ask_player, list_files, inspect_symbols, bash, readFile, execute_command, etc.)
+      allowed.add(part.toolCallId)
+    }
+  }
+
+  // Keep only the most recent verify_game check
+  if (verifyGameCallIds.length > 0) {
+    allowed.add(verifyGameCallIds[verifyGameCallIds.length - 1])
+  }
+
+  // Keep only the most recent loadSkill call per unique skill name
+  for (const [, callIds] of skillEvents.entries()) {
+    if (callIds.length > 0) {
+      allowed.add(callIds[callIds.length - 1])
+    }
+  }
+
+  // Per-file resolution within steps
+  for (const [, events] of fileEvents.entries()) {
+    if (events.length === 0) continue
+
+    let latestFullCopyIdx = -1
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (
+        events[i].toolName === "write_file" ||
+        events[i].toolName === "read_file"
+      ) {
+        latestFullCopyIdx = i
+        break
+      }
+    }
+
+    const deleteIdx = events.findIndex((e) => e.toolName === "delete_file")
+
+    if (deleteIdx !== -1) {
+      for (let i = 0; i < events.length; i++) {
+        if (i >= deleteIdx) {
+          allowed.add(events[i].toolCallId)
+        }
+      }
+    } else if (latestFullCopyIdx !== -1) {
+      allowed.add(events[latestFullCopyIdx].toolCallId)
+      for (let i = latestFullCopyIdx + 1; i < events.length; i++) {
+        allowed.add(events[i].toolCallId)
+      }
+    } else {
+      for (const e of events) {
+        allowed.add(e.toolCallId)
+      }
+    }
+  }
+
+  return allowed
+}
+
+function filterStepUnits(
+  steps: StepUnit[],
+  allowedToolCallIds: Set<string>
+): StepUnit[] {
+  const result: StepUnit[] = []
+
+  for (const step of steps) {
+    let assistantMsg = step.assistantMsg
+    if (
+      assistantMsg.role === "assistant" &&
+      Array.isArray(assistantMsg.content)
+    ) {
+      const filteredParts = assistantMsg.content.filter((part) => {
+        if (part.type === "tool-call") {
+          return allowedToolCallIds.has(part.toolCallId)
+        }
+        return true
+      })
+      assistantMsg = {
+        ...assistantMsg,
+        content: filteredParts,
+      } as ModelMessage
+    }
+
+    const filteredTools = step.toolMessages
+      .map((tm) => {
+        if (tm.role === "tool" && Array.isArray(tm.content)) {
+          const filteredParts = tm.content.filter((part) => {
+            if (part.type === "tool-result") {
+              return allowedToolCallIds.has(part.toolCallId)
+            }
+            return true
+          })
+          return { ...tm, content: filteredParts } as ModelMessage
+        }
+        return tm
+      })
+      .filter((tm) => Array.isArray(tm.content) && tm.content.length > 0)
+
+    const hasAssistantContent =
+      typeof assistantMsg.content === "string"
+        ? assistantMsg.content.length > 0
+        : Array.isArray(assistantMsg.content) &&
+          assistantMsg.content.length > 0
+
+    if (hasAssistantContent || filteredTools.length > 0) {
+      result.push({
+        ...step,
+        assistantMsg,
+        toolMessages: filteredTools,
+      })
+    }
+  }
+
+  return result
+}
+
+/**
+ * Step sanitizer for `streamText`'s `prepareStep`:
+ * - Clean historical providerOptions while strictly preserving tool call thoughtSignatures.
+ * - Deduplicate file tool calls within the active turn (superseded full copies, old compiler checks).
+ * - Prune reasoning: 1 reasoning block every 3rd completed reasoning step.
+ * - Removed 25-step hard cutoff to allow complex builds to execute without multi-file amnesia.
  */
 export function sanitizeStep(
   messages: ModelMessage[],
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   options?: SanitizeStepOptions
 ): ModelMessage[] {
   // 1. Clean historical providerOptions from text parts while strictly preserving tool call thoughtSignatures
   const cleaned = cleanHistoricalProviderOptions(messages)
 
-  // 2. Sliding-window step cutoff if messages exceed the window ceiling
-  const windowSteps = options?.windowSteps ?? 25
+  // 2. Group into prefix history and current turn steps
   const { prefixMessages, steps } = groupMessagesIntoSteps(cleaned)
 
-  // 3. Early-exit reasoning pruning:
+  // 3. Deduplicate file tool calls within the active turn
+  const allowedStepToolCallIds = resolveStepKeptToolCallIds(steps)
+  const filteredSteps = filterStepUnits(steps, allowedStepToolCallIds)
+
+  // 4. Early-exit reasoning pruning:
   // Iterate only until 3 completed reasoning steps are encountered.
   // As soon as 3 are found, exit early and prune reasoning from the first (oldest) one.
   const reasoningStepIndices: number[] = []
-  for (let i = 0; i < steps.length; i++) {
-    const content = steps[i].assistantMsg.content
+  for (let i = 0; i < filteredSteps.length; i++) {
+    const content = filteredSteps[i].assistantMsg.content
     if (Array.isArray(content) && content.some((p) => p.type === "reasoning")) {
       reasoningStepIndices.push(i)
       if (reasoningStepIndices.length === 3) {
@@ -580,7 +943,7 @@ export function sanitizeStep(
 
   if (reasoningStepIndices.length === 3) {
     const firstReasoningStepIndex = reasoningStepIndices[0]
-    const step = steps[firstReasoningStepIndex]
+    const step = filteredSteps[firstReasoningStepIndex]
     const [pruned] = pruneMessages({
       messages: [step.assistantMsg],
       reasoning: "all",
@@ -588,27 +951,14 @@ export function sanitizeStep(
     })
     if (pruned) {
       step.assistantMsg = pruned
+    } else {
+      filteredSteps.splice(firstReasoningStepIndex, 1)
     }
   }
 
-  // 4. Reassemble messages with preserved tool calls and thoughtSignatures
-  if (steps.length <= windowSteps) {
-    const result: ModelMessage[] = [...prefixMessages]
-    for (const step of steps) {
-      result.push(step.assistantMsg)
-      result.push(...step.toolMessages)
-    }
-    return result
-  }
-
-  const cutoffIndex = steps.length - windowSteps
-  const keptSteps = steps.filter((step, index) => {
-    if (index >= cutoffIndex) return true
-    return step.hasAskPlayer || step.hasFileWrite
-  })
-
+  // 5. Reassemble messages with preserved tool calls and thoughtSignatures (no arbitrary 25-step cutoff)
   const result: ModelMessage[] = [...prefixMessages]
-  for (const step of keptSteps) {
+  for (const step of filteredSteps) {
     result.push(step.assistantMsg)
     result.push(...step.toolMessages)
   }

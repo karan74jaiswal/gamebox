@@ -13,7 +13,7 @@ import { z } from "zod"
 import * as Sentry from "@sentry/node"
 
 import { getLanguageModel } from "@/lib/ai/provider"
-import { sanitizeContext } from "@/lib/ai/sanitizer"
+import { sanitizeContext, sanitizeStep } from "@/lib/ai/sanitizer"
 import {
   isAbortError,
   isRetryableQuotaError,
@@ -98,16 +98,23 @@ async function prepareRetryContext(params: {
     ...(tools ? { tools } : {}),
   })
 
+  // Sanitize retried messages to deduplicate superseded tool calls,
+  // clean provider options, and ensure Google thought signatures are attached.
+  const sanitizedRetryMessages = sanitizeStep([
+    ...sanitizedMessages,
+    ...converted,
+  ])
+
   // Strip any trailing assistant messages so the request strictly ends with role: "tool"
   while (
-    converted.length > 0 &&
-    converted[converted.length - 1].role === "assistant"
+    sanitizedRetryMessages.length > 0 &&
+    sanitizedRetryMessages[sanitizedRetryMessages.length - 1].role === "assistant"
   ) {
-    converted.pop()
+    sanitizedRetryMessages.pop()
   }
 
   return {
-    modelMessages: [...sanitizedMessages, ...converted],
+    modelMessages: sanitizedRetryMessages,
     retryMessage: trimmedMessage,
   }
 }
@@ -116,45 +123,45 @@ export const gameChat = chat.agent({
   id: "game-chat",
   tools,
 
-  compaction: {
-    shouldCompact: ({ totalTokens }) => (totalTokens ?? 0) > 1_000_000,
-    summarize: async ({ chatId }) => {
-      try {
-        if (!chatId) {
-          return "Game development turn completed. Code state persisted in sandbox."
-        }
-        const sandbox = await getGameSandbox(chatId)
-        const gitStatus = await sandbox.git.status(GAME_DIR)
-        const modifiedFiles = gitStatus.fileStatus?.map((f) => f.name) ?? []
+  // compaction: {
+  //   shouldCompact: ({ totalTokens }) => (totalTokens ?? 0) > 1_000_000,
+  //   summarize: async ({ chatId }) => {
+  //     try {
+  //       if (!chatId) {
+  //         return "Game development turn completed. Code state persisted in sandbox."
+  //       }
+  //       const sandbox = await getGameSandbox(chatId)
+  //       const gitStatus = await sandbox.git.status(GAME_DIR)
+  //       const modifiedFiles = gitStatus.fileStatus?.map((f) => f.name) ?? []
 
-        let activePlanSummary = ""
-        try {
-          const planBuf = await sandbox.fs.downloadFile(
-            `${GAME_DIR}/artifacts/game-plan.md`
-          )
-          const planText = planBuf.toString("utf-8")
-          if (planText) {
-            activePlanSummary = `\n- Active Plan: ${planText.slice(0, 500)}...`
-          }
-        } catch {
-          // Plan file might not exist yet in turn 1
-        }
+  //       let activePlanSummary = ""
+  //       try {
+  //         const planBuf = await sandbox.fs.downloadFile(
+  //           `${GAME_DIR}/artifacts/game-plan.md`
+  //         )
+  //         const planText = planBuf.toString("utf-8")
+  //         if (planText) {
+  //           activePlanSummary = `\n- Active Plan: ${planText.slice(0, 500)}...`
+  //         }
+  //       } catch {
+  //         // Plan file might not exist yet in turn 1
+  //       }
 
-        return [
-          "### Verified Turn Summary (Grounded via Daytona Git & FS)",
-          modifiedFiles.length > 0
-            ? `- Files Modified/Created: ${modifiedFiles.join(", ")}`
-            : "- Files on disk verified and unchanged.",
-          "- Working directory: /home/daytona/game",
-          activePlanSummary,
-        ]
-          .filter(Boolean)
-          .join("\n")
-      } catch {
-        return "Game development turn completed. Code state persisted in Daytona sandbox."
-      }
-    },
-  },
+  //       return [
+  //         "### Verified Turn Summary (Grounded via Daytona Git & FS)",
+  //         modifiedFiles.length > 0
+  //           ? `- Files Modified/Created: ${modifiedFiles.join(", ")}`
+  //           : "- Files on disk verified and unchanged.",
+  //         "- Working directory: /home/daytona/game",
+  //         activePlanSummary,
+  //       ]
+  //         .filter(Boolean)
+  //         .join("\n")
+  //     } catch {
+  //       return "Game development turn completed. Code state persisted in Daytona sandbox."
+  //     }
+  //   },
+  // },
 
   clientDataSchema: z.object({
     model: z.string().optional(),
