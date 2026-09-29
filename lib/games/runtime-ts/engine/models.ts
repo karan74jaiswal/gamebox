@@ -1,7 +1,9 @@
 import * as THREE from "three"
 import { GLTFLoader, type GLTF } from "three/addons/loaders/GLTFLoader.js"
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js"
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js"
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js"
+import { DRACO_DECODER_PATH, ASSET_CATALOG, getAssetUrl, searchAssets } from "./assets/catalog.ts"
 
 import type { ColorLike, Vector3Tuple } from "./types.ts"
 import {
@@ -816,7 +818,8 @@ export function createPool<T extends THREE.Object3D>(
 
 // --- Loading ----------------------------------------------------------------
 
-const gltfLoader = new GLTFLoader()
+const dracoLoader = new DRACOLoader().setDecoderPath(DRACO_DECODER_PATH)
+const gltfLoader = new GLTFLoader().setDRACOLoader(dracoLoader)
 const textureLoader = new THREE.TextureLoader()
 
 export interface LoadedModel {
@@ -825,17 +828,44 @@ export interface LoadedModel {
   gltf: GLTF
 }
 
+export interface LoadModelOptions {
+  scale?: number | [number, number, number]
+  position?: Vector3Tuple
+  castShadow?: boolean
+  receiveShadow?: boolean
+}
+
 /**
- * Loads a .glb/.gltf from a url. There is no local model in the sandbox, so
- * this is only for a CDN url you are certain resolves — a wrong one leaves the
- * game with nothing on screen.
+ * Loads a .glb/.gltf from a url or catalog key (e.g. "knightfall:batman"), decompressed automatically via Draco.
+ * Shadows and materials are configured recursively so models drop in lit scenes immediately.
  */
-export function loadModel(url: string): Promise<LoadedModel> {
+export function loadModel(
+  urlOrKey: string,
+  options: LoadModelOptions = {}
+): Promise<LoadedModel> {
+  const resolvedUrl = urlOrKey.startsWith("http://") || urlOrKey.startsWith("https://")
+    ? urlOrKey
+    : (getAssetUrl(urlOrKey) ?? urlOrKey)
+
   return new Promise((resolve, reject) => {
     gltfLoader.load(
-      url,
+      resolvedUrl,
       (gltf) => {
-        castShadows(gltf.scene)
+        castShadows(
+          gltf.scene,
+          options.castShadow ?? true,
+          options.receiveShadow ?? true
+        )
+        if (options.scale !== undefined) {
+          if (typeof options.scale === "number") {
+            gltf.scene.scale.setScalar(options.scale)
+          } else {
+            gltf.scene.scale.set(...options.scale)
+          }
+        }
+        if (options.position) {
+          gltf.scene.position.set(...options.position)
+        }
         resolve({ scene: gltf.scene, animations: gltf.animations, gltf })
       },
       undefined,
@@ -843,6 +873,8 @@ export function loadModel(url: string): Promise<LoadedModel> {
     )
   })
 }
+
+export { ASSET_CATALOG, DRACO_DECODER_PATH, getAssetUrl, searchAssets }
 
 export interface LoadTextureOptions {
   data?: boolean

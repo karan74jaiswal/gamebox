@@ -58,6 +58,8 @@ export interface FogConfig {
 export interface EngineOptions {
   /** DOM element to mount the canvas into (defaults to document.body) */
   container?: HTMLElement
+  /** Existing canvas element to render into (if omitted, a new canvas is created) */
+  canvas?: HTMLCanvasElement
   /** Scene background color, or null for transparent */
   background?: ColorLike | null
   /** Fog density distance (number) or explicit { color, near, far } config */
@@ -602,6 +604,10 @@ export interface SoundPlayConfig {
   pitch?: number
   /** Random pitch variation range (+/-) */
   vary?: number
+  /** Volume multiplier [0..1] */
+  gain?: number
+  /** Volume multiplier [0..1] */
+  volume?: number
   [key: string]: unknown
 }
 
@@ -652,15 +658,20 @@ export interface AudioSystem {
   /** Master volume [0..1] */
   volume: number
 
-  /**
-   * Set mute state or toggle if parameter omitted.
-   */
+  /** Set mute state or toggle if parameter omitted */
   mute: (value?: boolean) => AudioSystem
 
-  /**
-   * Toggle mute state.
-   */
+  /** Unmute audio */
+  unmute: () => AudioSystem
+
+  /** Check if audio is muted */
+  isMuted: () => boolean
+
+  /** Toggle mute state */
   toggleMute: () => AudioSystem
+
+  /** Load an audio clip URL into memory cache */
+  load: (name: string, url: string) => Promise<AudioBuffer | undefined>
 
   /** Background music player */
   music: {
@@ -677,6 +688,32 @@ export interface AudioSystem {
    * Unlock AudioContext on first user interaction gesture.
    */
   unlock: () => void
+
+  /**
+   * Pre-loads an audio file from a CDN URL into an AudioBuffer.
+   */
+  loadClip: (name: string, url: string) => Promise<AudioBuffer | undefined>
+
+  /**
+   * Plays a pre-loaded audio buffer clip with optional volume and pitch variation.
+   */
+  playClip: (
+    name: string,
+    options?: { volume?: number; pitchVariance?: number; loop?: boolean }
+  ) => AudioBufferSourceNode | undefined
+
+  /**
+   * Plays a streaming or looping background music track from a CDN URL.
+   */
+  playMusic: (
+    url: string,
+    options?: { volume?: number; loop?: boolean; fadeIn?: number }
+  ) => void
+
+  /**
+   * Stops active streaming background music.
+   */
+  stopMusic: (fadeOut?: number) => void
 
   /**
    * Close AudioContext and clean up resources.
@@ -1448,4 +1485,8 @@ export interface Game {
   add: Engine["add"]
   /** Shortcut to engine.remove */
   remove: Engine["remove"]
+  /** Shortcut to engine.start */
+  start: Engine["start"]
+  /** Shortcut to engine.stop */
+  stop: Engine["stop"]
 }

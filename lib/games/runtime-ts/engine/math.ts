@@ -9,6 +9,14 @@
 export const TAU: number = Math.PI * 2
 export const DEG: number = Math.PI / 180
 
+export function degToRad(degrees: number): number {
+  return degrees * DEG
+}
+
+export function radToDeg(radians: number): number {
+  return radians / DEG
+}
+
 export function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value
 }

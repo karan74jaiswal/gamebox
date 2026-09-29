@@ -661,6 +661,30 @@ test("runtime top-level exports surface matches existing JS runtime", () => {
   assert.equal(typeof runtime.platformer, "function")
   assert.ok(runtime.brand)
   assert.ok(runtime.palette)
+  assert.equal(typeof runtime.searchAssets, "function")
+  assert.equal(typeof runtime.listPacks, "function")
+  assert.ok(runtime.ASSET_PACKS)
+})
+
+test("asset catalog packs, semantic tags, and search scoping", () => {
+  const packs = runtime.listPacks()
+  assert.ok(packs.length >= 10, "Expected at least 10 asset packs")
+
+  const flightPacks = runtime.listPacks("flight")
+  assert.ok(flightPacks.some((p: { id: string }) => p.id === "knightfall"))
+
+  // Test generic search matching via semantic pack tags
+  const heroAssets = runtime.searchAssets("hero")
+  assert.ok(heroAssets.length > 0, "Expected hero assets to match")
+
+  // Test pack scoping
+  const scoped = runtime.searchAssets("", undefined, "knightfall")
+  assert.ok(scoped.length > 0, "Expected knightfall pack assets")
+  assert.ok(scoped.every((a: { exp: string }) => a.exp === "knightfall"))
+
+  // Verify getAssetUrl
+  const url = runtime.getAssetUrl("knightfall:batman")
+  assert.ok(url && url.startsWith("https://cdn.mint.gg/glb/"))
 })
 
 console.log(`\n========================================`)

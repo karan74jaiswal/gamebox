@@ -23,9 +23,11 @@ const MAX_DELTA = 1 / 15
 
 export function createEngine(options: EngineOptions = {}): Engine {
   const {
-    container = typeof document !== "undefined"
-      ? document.body
-      : ({} as HTMLElement),
+    container = (options.canvas?.parentElement ??
+      (typeof document !== "undefined"
+        ? document.body
+        : ({} as HTMLElement))),
+    canvas: existingCanvas,
     background = "#0a0a0a",
     fog = null,
     fov = 60,
@@ -43,6 +45,7 @@ export function createEngine(options: EngineOptions = {}): Engine {
   } = options
 
   const renderer = new THREE.WebGLRenderer({
+    canvas: existingCanvas,
     antialias,
     alpha,
     powerPreference: "high-performance",
@@ -62,11 +65,13 @@ export function createEngine(options: EngineOptions = {}): Engine {
   }
 
   const canvas = renderer.domElement
-  canvas.style.display = "block"
-  canvas.style.width = "100%"
-  canvas.style.height = "100%"
-  canvas.style.touchAction = "none"
-  container.appendChild(canvas)
+  if (!existingCanvas && container && typeof container.appendChild === "function") {
+    canvas.style.display = "block"
+    canvas.style.width = "100%"
+    canvas.style.height = "100%"
+    canvas.style.touchAction = "none"
+    container.appendChild(canvas)
+  }
 
   const scene = new THREE.Scene()
   if (background !== null && background !== undefined) {

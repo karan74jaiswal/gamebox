@@ -12,7 +12,11 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@engine/*": ["./engine/*"]
+    }
   },
   "include": ["**/*.ts", "**/*.d.ts"],
   "exclude": ["vite.config.ts"]

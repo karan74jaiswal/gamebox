@@ -41,6 +41,9 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
   let unlocked = false
   let currentVolume = volume
   let pitchShift = 1
+  const clips = new Map<string, AudioBuffer>()
+  let activeBgmSource: AudioBufferSourceNode | null = null
+  let activeBgmGain: GainNode | null = null
 
   function ensure(): AudioContext | null {
     if (context) return context
@@ -358,13 +361,24 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
     sounds,
 
     /**
-     * Plays a named sound.
+     * Plays a named sound or preloaded audio clip.
      *
      * `vary` is the one option worth using everywhere: repetition is what makes
      * a sound effect grating, and a 5% random pitch shift makes twenty coin
      * pickups feel lively instead of mechanical.
      */
     play(name: string, config: SoundPlayConfig = {}): SoundOutput {
+      if (clips.has(name)) {
+        return audio.playClip(name, {
+          volume:
+            typeof config.volume === "number"
+              ? config.volume
+              : typeof config.gain === "number"
+                ? config.gain
+                : 1,
+          pitchVariance: config.vary,
+        })
+      }
       const sound = sounds[name]
       if (!sound) return
       unlock()
@@ -397,11 +411,104 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
       if (master) master.gain.value = value ? 0 : currentVolume
       return audio
     },
+    unmute(): AudioSystem {
+      return audio.mute(false)
+    },
+    isMuted(): boolean {
+      return audio.muted
+    },
     toggleMute(): AudioSystem {
       return audio.mute(!audio.muted)
     },
 
     music: { start: startMusic, stop: stopMusic },
+
+    async load(name: string, url: string): Promise<AudioBuffer | undefined> {
+      return audio.loadClip(name, url)
+    },
+
+    async loadClip(name: string, url: string): Promise<AudioBuffer | undefined> {
+      const ctx = ensure()
+      if (!ctx) return undefined
+      if (clips.has(name)) return clips.get(name)
+      try {
+        const response = await fetch(url)
+        if (!response.ok) return undefined
+        const arrayBuf = await response.arrayBuffer()
+        const audioBuf = await ctx.decodeAudioData(arrayBuf)
+        clips.set(name, audioBuf)
+        return audioBuf
+      } catch {
+        return undefined
+      }
+    },
+
+    playClip(
+      name: string,
+      options: { volume?: number; pitchVariance?: number; loop?: boolean } = {}
+    ): AudioBufferSourceNode | undefined {
+      const ctx = ensure()
+      if (!ctx || audio.muted || !master) return undefined
+      const buf = clips.get(name)
+      if (!buf) return undefined
+      unlock()
+      const { volume = 1, pitchVariance = 0, loop = false } = options
+      const source = ctx.createBufferSource()
+      const gainNode = ctx.createGain()
+      source.buffer = buf
+      source.loop = loop
+      if (pitchVariance > 0) {
+        source.playbackRate.value = 1 + (Math.random() - 0.5) * pitchVariance * 2
+      }
+      gainNode.gain.value = volume
+      source.connect(gainNode).connect(master)
+      source.start()
+      return source
+    },
+
+    playMusic(
+      url: string,
+      options: { volume?: number; loop?: boolean; fadeIn?: number } = {}
+    ): void {
+      const ctx = ensure()
+      if (!ctx || !master) return
+      unlock()
+      const { volume = 0.5, loop = true, fadeIn = 0.5 } = options
+      audio.stopMusic()
+      void (async () => {
+        try {
+          const response = await fetch(url)
+          if (!response.ok) return
+          const audioBuf = await ctx.decodeAudioData(await response.arrayBuffer())
+          const source = ctx.createBufferSource()
+          const gainNode = ctx.createGain()
+          source.buffer = audioBuf
+          source.loop = loop
+          const startTime = ctx.currentTime
+          gainNode.gain.setValueAtTime(0.001, startTime)
+          gainNode.gain.linearRampToValueAtTime(volume, startTime + fadeIn)
+          source.connect(gainNode).connect(master)
+          source.start()
+          activeBgmSource = source
+          activeBgmGain = gainNode
+        } catch {}
+      })()
+    },
+
+    stopMusic(fadeOut: number = 0.3): void {
+      if (!activeBgmSource || !activeBgmGain || !context) return
+      const curTime = context.currentTime
+      activeBgmGain.gain.setValueAtTime(activeBgmGain.gain.value, curTime)
+      activeBgmGain.gain.linearRampToValueAtTime(0.001, curTime + fadeOut)
+      const src = activeBgmSource
+      setTimeout(() => {
+        try {
+          src.stop()
+        } catch {}
+      }, fadeOut * 1000)
+      activeBgmSource = null
+      activeBgmGain = null
+    },
 
     get ready(): boolean {
       return unlocked
@@ -410,6 +517,8 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
 
     dispose() {
       stopMusic()
+      audio.stopMusic()
+      clips.clear()
       context?.close()
       context = null
     },

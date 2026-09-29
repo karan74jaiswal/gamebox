@@ -29,6 +29,12 @@ export * as lights from "./lighting.ts"
 export * as effects from "./particles.ts"
 export * as anim from "./animation.ts"
 export * as debug from "./debug.ts"
+export * as assets from "./assets/catalog.ts"
+export * as camera from "./camera.ts"
+export * as combat from "./combat.ts"
+export * as flight from "./flight.ts"
+export * as surface from "./surface.ts"
+export * as audioReactive from "./audio-reactive.ts"
 
 export { createEngine, disposeObject } from "./engine.ts"
 export { createInput } from "./input.ts"
@@ -81,6 +87,20 @@ export {
 } from "./controls.ts"
 
 export { palette, brand } from "./materials.ts"
+export { createChaseCamera, createFirstPersonBob } from "./camera.ts"
+export {
+  ASSET_CATALOG,
+  ASSET_PACKS,
+  DRACO_DECODER_PATH,
+  searchAssets,
+  getAssetUrl,
+  listPacks,
+  MASTER_ASSETS,
+} from "./assets/catalog.ts"
+export { calculateKnockback, checkHit, createFighterAI } from "./combat.ts"
+export { createFlightModel } from "./flight.ts"
+export { createSurfacePainter } from "./surface.ts"
+export { createAudioAnalyser } from "./audio-reactive.ts"
 
 /**
  * Everything a game needs, started and ready.
@@ -122,6 +142,8 @@ export function createGame(options: GameOptions = {}): Game {
     onResize: engine.onResize,
     add: engine.add,
     remove: engine.remove,
+    start: engine.start,
+    stop: engine.stop,
   }
 
   if (typeof window !== "undefined") {

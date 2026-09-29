@@ -105,3 +105,316 @@ canvas {
     animation: none;
   }
 }
+
+/* --- Template Arcade Launcher UI --- */
+.arcade-launcher-container {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: clamp(24px, 5vh, 60px) 20px 40px;
+  background: radial-gradient(circle at 50% 20%, rgba(10, 10, 10, 0.4) 0%, rgba(10, 10, 10, 0.88) 85%);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+
+.arcade-hero {
+  text-align: center;
+  max-width: 680px;
+  margin-bottom: 2rem;
+}
+
+.arcade-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  background: rgba(234, 88, 12, 0.15);
+  color: var(--amber);
+  border: 1px solid rgba(234, 88, 12, 0.35);
+  margin-bottom: 12px;
+}
+
+.arcade-hero h1 {
+  margin: 0 0 8px;
+  font-size: clamp(1.8rem, 4vw, 2.75rem);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  background: linear-gradient(180deg, #ffffff 30%, #a1a1aa 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.arcade-hero p {
+  margin: 0;
+  color: #94a3b8;
+  font-size: clamp(0.9rem, 2vw, 1.05rem);
+  line-height: 1.5;
+}
+
+.arcade-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  width: 100%;
+  max-width: 1080px;
+}
+
+.arcade-card {
+  background: rgba(24, 24, 27, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.arcade-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(234, 88, 12, 0.5);
+  background: rgba(30, 30, 35, 0.85);
+  box-shadow: 0 12px 30px rgba(234, 88, 12, 0.15);
+}
+
+.arcade-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.arcade-card-icon {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.arcade-genre-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.arcade-card-title {
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0 0 6px;
+  color: #f8fafc;
+}
+
+.arcade-card-desc {
+  font-size: 0.825rem;
+  color: #94a3b8;
+  line-height: 1.45;
+  margin: 0 0 16px;
+  flex-grow: 1;
+}
+
+.arcade-card-controls {
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 14px;
+  font-size: 0.725rem;
+  color: #a1a1aa;
+}
+
+.arcade-card-controls strong {
+  color: var(--amber);
+  display: block;
+  margin-bottom: 3px;
+  font-size: 0.675rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.arcade-card-btn {
+  width: 100%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: none;
+  background: #ea580c;
+  color: white;
+  font-weight: 650;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.arcade-card-btn:hover {
+  background: #f97316;
+}
+
+.arcade-card-btn:active {
+  transform: scale(0.98);
+}
+
+/* --- Floating Template Switcher Button --- */
+.template-switcher-pill {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  background: rgba(15, 23, 42, 0.85);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 9999px;
+  padding: 8px 16px;
+  font-size: 0.825rem;
+  font-weight: 650;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.template-switcher-pill:hover {
+  background: rgba(30, 41, 59, 0.95);
+  border-color: rgba(234, 88, 12, 0.6);
+  transform: translateY(-1px);
+}
+
+/* --- Template Switcher Modal / Dropdown --- */
+.template-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: modal-fade-in 0.18s ease-out;
+}
+
+.template-modal {
+  background: #121316;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 440px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7);
+  display: flex;
+  flex-direction: column;
+}
+
+.template-modal-header {
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.template-modal-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.template-modal-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.template-modal-close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.template-modal-list {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.template-modal-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid transparent;
+  color: #e2e8f0;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.template-modal-item:hover {
+  background: rgba(234, 88, 12, 0.12);
+  border-color: rgba(234, 88, 12, 0.4);
+  color: #fff;
+}
+
+.template-modal-item.active {
+  background: rgba(234, 88, 12, 0.2);
+  border-color: #ea580c;
+  color: #fb923c;
+  font-weight: 600;
+}
+
+.template-modal-item-icon {
+  font-size: 1.4rem;
+}
+
+.template-modal-item-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.template-modal-item-title {
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+
+.template-modal-item-sub {
+  font-size: 0.725rem;
+  color: #94a3b8;
+}
+
+@keyframes modal-fade-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
