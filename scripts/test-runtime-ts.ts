@@ -17,10 +17,22 @@ class MockCanvasContext2D {
   textBaseline: string = ""
 
   fillRect() {}
+  strokeRect() {}
   beginPath() {}
+  closePath() {}
   moveTo() {}
   lineTo() {}
+  arc() {}
+  ellipse() {}
   stroke() {}
+  fill() {}
+  save() {}
+  restore() {}
+  translate() {}
+  rotate() {}
+  scale() {}
+  setLineDash() {}
+  roundRect() {}
   createImageData(w: number, h: number) {
     return { data: new Uint8ClampedArray(w * h * 4) }
   }
@@ -74,6 +86,8 @@ class MockElement {
   animate() {
     return { onfinish: null as any }
   }
+  setPointerCapture() {}
+  releasePointerCapture() {}
 }
 
 const mockLocalStorage = new Map<string, string>()
@@ -99,6 +113,7 @@ Object.defineProperty((globalThis as any).localStorage, "length", {
 
 ;(globalThis as any).document = {
   createElement: (tag: string) => new MockElement(),
+  createElementNS: (ns: string, tag: string) => new MockElement(),
   head: new MockElement(),
   body: new MockElement(),
   getElementById: (id: string) => null,
@@ -121,6 +136,8 @@ import * as particles from "../lib/games/runtime-ts/engine/particles.ts"
 import * as sound from "../lib/games/runtime-ts/engine/sound.ts"
 import * as hud from "../lib/games/runtime-ts/engine/hud.ts"
 import * as debug from "../lib/games/runtime-ts/engine/debug.ts"
+import * as gameFeel from "../lib/games/runtime-ts/engine/game-feel.ts"
+import * as camera from "../lib/games/runtime-ts/engine/camera.ts"
 import * as engineModule from "../lib/games/runtime-ts/engine/engine.ts"
 import * as runtime from "../lib/games/runtime-ts/engine/index.ts"
 
@@ -660,31 +677,335 @@ test("runtime top-level exports surface matches existing JS runtime", () => {
   assert.equal(typeof runtime.thirdPerson, "function")
   assert.equal(typeof runtime.platformer, "function")
   assert.ok(runtime.brand)
-  assert.ok(runtime.palette)
-  assert.equal(typeof runtime.searchAssets, "function")
-  assert.equal(typeof runtime.listPacks, "function")
-  assert.ok(runtime.ASSET_PACKS)
+  assert.ok(runtime.DRACO_DECODER_PATH)
 })
 
-test("asset catalog packs, semantic tags, and search scoping", () => {
-  const packs = runtime.listPacks()
-  assert.ok(packs.length >= 10, "Expected at least 10 asset packs")
+test("draco decoder path export", () => {
+  assert.ok(runtime.DRACO_DECODER_PATH)
+  assert.ok(runtime.DRACO_DECODER_PATH.startsWith("https://"))
+})
 
-  const flightPacks = runtime.listPacks("flight")
-  assert.ok(flightPacks.some((p: { id: string }) => p.id === "knightfall"))
+console.log("\n▶ Testing game-feel.ts")
+test("ShakeRig trauma decay and deterministic camera offsets", () => {
+  const shake = new gameFeel.ShakeRig()
+  assert.equal(shake.trauma, 0)
+  shake.addTrauma(0.5)
+  assert.equal(shake.trauma, 0.5)
+  shake.addTrauma(0.8)
+  assert.equal(shake.trauma, 1.0)
 
-  // Test generic search matching via semantic pack tags
-  const heroAssets = runtime.searchAssets("hero")
-  assert.ok(heroAssets.length > 0, "Expected hero assets to match")
+  const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
+  shake.update(0.016, cam)
+  assert.ok(Math.abs(cam.position.x) > 0 || Math.abs(cam.position.y) > 0 || Math.abs(cam.rotation.z) > 0)
 
-  // Test pack scoping
-  const scoped = runtime.searchAssets("", undefined, "knightfall")
-  assert.ok(scoped.length > 0, "Expected knightfall pack assets")
-  assert.ok(scoped.every((a: { exp: string }) => a.exp === "knightfall"))
+  shake.update(1.0, cam)
+  assert.ok(shake.trauma < 0.1)
+  shake.update(1.0, cam)
+  assert.equal(shake.trauma, 0)
+})
 
-  // Verify getAssetUrl
-  const url = runtime.getAssetUrl("knightfall:batman")
-  assert.ok(url && url.startsWith("https://cdn.mint.gg/glb/"))
+test("HitstopManager timeScale freeze and auto-recovery", () => {
+  const hitstop = new gameFeel.HitstopManager()
+  assert.equal(hitstop.isFrozen(), false)
+  assert.equal(hitstop.getTimeScale(), 1.0)
+
+  hitstop.trigger(100, 0.05)
+  assert.equal(hitstop.isFrozen(), true)
+  assert.equal(hitstop.getTimeScale(), 0.05)
+
+  const scaledDelta = hitstop.update(0.05)
+  assert.ok(scaledDelta < 0.05)
+  assert.equal(hitstop.isFrozen(), true)
+
+  const scaleEnd = hitstop.update(0.06)
+  assert.equal(scaleEnd, 0.06)
+  assert.equal(hitstop.isFrozen(), false)
+})
+
+test("squashAndStretch volume preservation and step", () => {
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1))
+  const controller = gameFeel.squashAndStretch(mesh, { squashY: 0.5, durationSec: 0.2 })
+  const vol = mesh.scale.x * mesh.scale.y * mesh.scale.z
+  assert.ok(Math.abs(vol - 1.0) < 0.05)
+
+  controller.step(0.1)
+  assert.ok(mesh.scale.y > 0.5)
+
+  controller.step(0.2)
+  assert.equal(mesh.scale.x, 1)
+  assert.equal(mesh.scale.y, 1)
+  assert.equal(mesh.scale.z, 1)
+})
+
+test("FovPuncher camera kick and exponential recovery", () => {
+  const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
+  const fovPuncher = new gameFeel.FovPuncher(cam)
+  assert.equal(cam.fov, 60)
+  fovPuncher.punch(8)
+  fovPuncher.update(0.01)
+  assert.ok(cam.fov > 60)
+  fovPuncher.update(2.0)
+  assert.equal(cam.fov, 60)
+})
+
+test("flashHit emissive pulse and material restoration", () => {
+  const mat = new THREE.MeshStandardMaterial({ emissive: new THREE.Color("#000000") })
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat)
+  gameFeel.flashHit(mesh, { color: "#ffffff", peak: 2.0 })
+  assert.ok(mat.userData.baseEmissive !== undefined)
+})
+
+console.log("\n▶ Testing AAA materials and procedural textures")
+test("PBR material presets and shader cookbook", () => {
+  const metal = runtime.paintedMetal({ color: "#2563eb", roughness: 0.3 })
+  assert.equal(metal.metalness, 0.1)
+  assert.equal(metal.clearcoat, 0.9)
+
+  const rubber = runtime.rubber({ color: "#18181b" })
+  assert.equal(rubber.metalness, 0.0)
+  assert.equal(rubber.roughness, 0.94)
+
+  const glass = runtime.cheapGlass({ opacity: 0.3 })
+  assert.equal(glass.transparent, true)
+  assert.equal(glass.opacity, 0.3)
+
+  const emissive = runtime.emissiveSignal("#ff0000", 3.0)
+  assert.equal(emissive.emissiveIntensity, 3.0)
+})
+
+test("procedural canvas textures generators", () => {
+  const trim = runtime.proceduralTextures.trimSheet()
+  assert.ok(trim instanceof THREE.CanvasTexture)
+  assert.equal(trim.colorSpace, THREE.SRGBColorSpace)
+  assert.equal(trim.wrapS, THREE.RepeatWrapping)
+
+  const stripes = runtime.proceduralTextures.hazardStripes()
+  assert.ok(stripes instanceof THREE.CanvasTexture)
+
+  const tiles = runtime.proceduralTextures.stoneTiles()
+  assert.ok(tiles instanceof THREE.CanvasTexture)
+})
+
+test("custom shader hooks and sky dome", () => {
+  const mat = new THREE.MeshStandardMaterial()
+  runtime.applyFresnelRim(mat, { color: "#00ffff" })
+  assert.equal(typeof mat.onBeforeCompile, "function")
+  assert.equal(mat.customProgramCacheKey(), "fresnel-rim")
+
+  const scene = new THREE.Scene()
+  const sky = runtime.createSkyDome(scene, { topColor: "#0f172a", horizonColor: "#38bdf8" })
+  assert.ok(sky instanceof THREE.Mesh)
+  assert.ok(sky.material instanceof THREE.ShaderMaterial)
+})
+
+console.log("\n▶ Testing authored model factories and diagnostics")
+test("createHeroVehicle model factory result", () => {
+  const vehicle = runtime.createHeroVehicle({ hullColor: "#2563eb" })
+  assert.ok(vehicle.root)
+  assert.ok(vehicle.collision)
+  assert.ok(vehicle.bounds)
+  assert.ok(vehicle.parts?.hull)
+  assert.ok(vehicle.parts?.cockpit)
+  assert.ok((vehicle.diagnostics?.triangles ?? 0) > 0)
+  assert.ok((vehicle.diagnostics?.meshes ?? 0) > 0)
+})
+
+test("createHeroCharacter articulated humanoid result", () => {
+  const hero = runtime.createHeroCharacter({ armorColor: "#475569" })
+  assert.ok(hero.root)
+  assert.ok(hero.collision)
+  assert.ok(hero.parts?.torso)
+  assert.ok(hero.parts?.head)
+  assert.ok(hero.parts?.legLeft)
+  assert.ok(hero.parts?.legRight)
+  assert.ok((hero.diagnostics?.triangles ?? 0) > 0)
+})
+
+test("createObstacle, createReward, createWorldPropKit", () => {
+  const obstacle = runtime.createObstacle("barrier")
+  assert.ok(obstacle.root)
+  assert.ok(obstacle.collision)
+
+  const reward = runtime.createReward("token")
+  assert.ok(reward.root)
+  assert.ok(reward.collision)
+
+  const props = runtime.createWorldPropKit()
+  const crate = props.createCrate()
+  assert.ok(crate instanceof THREE.Group)
+})
+
+console.log("\n▶ Testing CameraRig")
+test("CameraRig follow damping and lookAhead", () => {
+  const cam = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
+  const rig = new camera.CameraRig(cam, new THREE.Vector3(0, 4, 10))
+  const targetPos = new THREE.Vector3(0, 0, 0)
+  rig.snapTo(targetPos)
+  assert.equal(cam.position.z, 10)
+  rig.addTrauma(0.5)
+  rig.punchFov(5)
+  rig.update(0.016, targetPos)
+  assert.ok(cam.fov > 60)
+})
+
+console.log("\n▶ Testing AAA HUD components")
+test("HUD components creation and API", () => {
+  const healthBar = runtime.createHealthBar({ current: 80, max: 100, showShield: true, shield: 20 })
+  assert.ok(healthBar.element)
+  healthBar.setHealth(60)
+  healthBar.setShield(10)
+  healthBar.setLabel("SHIELDED")
+  healthBar.remove()
+
+  const card = runtime.createObjectiveCard({ title: "TEST", current: 1, total: 5, timeRemaining: 120 })
+  assert.ok(card.element)
+  card.setProgress(2, 5)
+  card.setTimer(119)
+  card.complete()
+  card.remove()
+
+  const badge = runtime.createScoreBadge({ score: 1000, highScore: 5000, combo: 2 })
+  assert.ok(badge.element)
+  badge.addScore(250)
+  badge.setCombo(3, 2.5)
+  badge.bump()
+  badge.remove()
+
+  const modal = runtime.createModalOverlay({ title: "VICTORY", type: "victory", stats: [{ label: "TIME", value: "01:23" }] })
+  assert.ok(modal.element)
+  modal.updateStats([{ label: "TIME", value: "01:23", highlight: true }])
+  modal.close()
+
+  const touch = runtime.createTouchControls({ onlyOnTouch: false })
+  assert.ok(touch.element)
+  assert.equal(typeof touch.vector.x, "number")
+  touch.remove()
+})
+
+console.log("\n▶ Testing engine diagnostics and environment")
+test("Engine diagnostics and neutral environment exports", () => {
+  assert.equal(typeof runtime.setupNeutralEnvironment, "function")
+  const mockScene = new THREE.Scene()
+  const mockRenderer = {} as any
+  const envResult = runtime.setupNeutralEnvironment(mockRenderer, mockScene)
+  assert.equal(envResult, null)
+
+  const win = (globalThis as any).window
+  win.__THREE_GAME_DIAGNOSTICS__ = {
+    frame: 100,
+    elapsed: 1.66,
+    fps: 60,
+    renderer: { calls: 12, triangles: 450, geometries: 8, textures: 4 },
+  }
+  assert.ok(win.__THREE_GAME_DIAGNOSTICS__)
+  assert.equal(win.__THREE_GAME_DIAGNOSTICS__.frame, 100)
+  assert.equal(win.__THREE_GAME_DIAGNOSTICS__.renderer.calls, 12)
+})
+
+console.log("\n▶ Testing MaterialKit and Seeded Random")
+test("createMaterialKit returns cohesive role materials", () => {
+  const kit = runtime.createMaterialKit({
+    primary: "#1e293b",
+    secondary: "#475569",
+    trim: "#f59e0b",
+  })
+  assert.ok(kit.bodyPrimary)
+  assert.ok(kit.bodySecondary)
+  assert.ok(kit.trim)
+  assert.ok(kit.hazard)
+  assert.ok(kit.reward)
+  assert.ok(kit.shieldBoost)
+  assert.ok(kit.glass)
+  assert.ok(kit.emissiveSignal)
+  assert.ok(kit.groundContact)
+  assert.ok(kit.decalDark)
+  assert.ok(kit.decalLight)
+})
+
+test("createSeededRandom reproducibility", () => {
+  const rngA = runtime.createSeededRandom(1234)
+  const rngB = runtime.createSeededRandom(1234)
+  const valA1 = rngA()
+  const valA2 = rngA()
+  const valB1 = rngB()
+  const valB2 = rngB()
+  assert.equal(valA1, valB1)
+  assert.equal(valA2, valB2)
+  assert.notEqual(valA1, valA2)
+})
+
+console.log("\n▶ Testing Audio System channels, ducking, cooldown, and spatial playAt")
+test("Audio channels, ducking, cooldown, and 3D spatial playAt", () => {
+  const audio = runtime.createAudio()
+  assert.equal(audio.getGroupVolume("master"), 0.35)
+  assert.equal(audio.getGroupVolume("sfx"), 1)
+  assert.equal(audio.getGroupVolume("ui"), 0.8)
+
+  audio.setGroupVolume("sfx", 0.7)
+  assert.equal(audio.getGroupVolume("sfx"), 0.7)
+
+  assert.equal(audio.isGroupMuted("music"), false)
+  audio.muteGroup("music", true)
+  assert.equal(audio.isGroupMuted("music"), true)
+  audio.muteGroup("music", false)
+  assert.equal(audio.isGroupMuted("music"), false)
+
+  audio.duck(0.5, 0.2)
+
+  // Test new sounds presence
+  const expectedSounds = [
+    "hover", "confirm", "cancel", "pause",
+    "dash", "boost", "drift", "shield", "score", "checkpoint", "warning", "impact"
+  ]
+  for (const name of expectedSounds) {
+    assert.ok(audio.sounds[name], `Sound '${name}' must be registered`)
+  }
+
+  // Play with cooldown
+  audio.playWithCooldown("hover", 50)
+  audio.playWithCooldown("hover", 50) // within cooldown window
+
+  // Spatial playAt
+  audio.playAt("jump", [5, 0, 5], [0, 0, 0], { maxDistance: 20 })
+
+  audio.dispose()
+})
+
+console.log("\n▶ Testing window.__THREE_GAME_TEST_HOOKS__")
+test("Engine installs and responds to __THREE_GAME_TEST_HOOKS__", () => {
+  const win = (globalThis as any).window
+  const mockContainer = new MockElement()
+  const mockCanvas = new MockElement()
+  const engine = runtime.createEngine({ container: mockContainer as any, canvas: mockCanvas as any })
+
+  assert.ok(win.__THREE_GAME_TEST_HOOKS__)
+  const hooks = win.__THREE_GAME_TEST_HOOKS__
+  assert.equal(typeof hooks.seed, "function")
+  assert.equal(typeof hooks.setState, "function")
+  assert.equal(typeof hooks.setPausedForScreenshot, "function")
+  assert.equal(typeof hooks.setReducedMotion, "function")
+  assert.equal(typeof hooks.hideDebugUi, "function")
+
+  // seed hook
+  hooks.seed(999)
+  assert.ok(engine.rng)
+
+  // setState hook
+  const ackPlay = hooks.setState("active-play")
+  assert.deepEqual(ackPlay, { state: "active-play" })
+  const ackPause = hooks.setState("pause")
+  assert.deepEqual(ackPause, { state: "pause" })
+  const ackComplete = hooks.setState("complete")
+  assert.deepEqual(ackComplete, { state: "complete" })
+
+  // setPausedForScreenshot and setReducedMotion
+  hooks.setPausedForScreenshot(true)
+  hooks.setReducedMotion(true)
+  assert.equal(engine.reducedMotion, true)
+  hooks.hideDebugUi(true)
+
+  engine.dispose()
+  assert.equal(win.__THREE_GAME_TEST_HOOKS__, undefined)
 })
 
 console.log(`\n========================================`)

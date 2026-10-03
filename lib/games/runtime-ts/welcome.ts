@@ -8,74 +8,12 @@ import {
   lights,
   math,
 } from "./engine/index.ts"
-import { GAMES_CATALOG, type GameMeta } from "./games/catalog.ts"
-
-const ICONS: Record<string, string> = {
-  mossbound: "⚔️",
-  mossboundEngine: "⚔️",
-  knightfall: "🦇",
-  knightfallEngine: "🦇",
-  smash: "🥊",
-  smashEngine: "🥊",
-  parking: "🏎️",
-  parkingEngine: "🏎️",
-  boat: "⛵",
-  boatEngine: "🚤",
-  flappy: "🐥",
-  flappyEngine: "🐥",
-  mars: "🚀",
-  marsEngine: "🚀",
-  hoops: "🏀",
-  hoopsEngine: "🏀",
-  lawn: "🌱",
-  lawnEngine: "🌱",
-  blaster: "🔫",
-  blasterEngine: "🔫",
-  boulder: "🏝️",
-  boulderEngine: "🏝️",
-  experiment: "🔬",
-  experimentEngine: "🔬",
-  reef: "🥥",
-  reefEngine: "🥥",
-  swimming: "🐠",
-  swimmingEngine: "🐠",
-  breakline: "🏂",
-  breaklineEngine: "🏂",
-  vanguard: "🛡️",
-  vanguardEngine: "🛡️",
-  helios: "🛸",
-  heliosEngine: "🛸",
-  ninjutsu: "🥷",
-  ninjutsuEngine: "🥷",
-  soccer: "⚽",
-  soccerEngine: "⚽",
-  putt: "⛳",
-  puttEngine: "⛳",
-  pogo: "🦘",
-  pogoEngine: "🦘",
-}
-
-// 1. Detect if the player launched a specific game via URL parameter: ?game=<id> or ?template=<id>
-const urlParams =
-  typeof window !== "undefined"
-    ? new URLSearchParams(window.location.search)
-    : null
-const requestedGameKey =
-  urlParams?.get("game") || urlParams?.get("template")
-
-if (requestedGameKey && GAMES_CATALOG[requestedGameKey]) {
-  const meta = GAMES_CATALOG[requestedGameKey]
-  if (meta.href && typeof window !== "undefined") {
-    window.location.href = meta.href
-  }
-} else {
-  launchWelcomeWithArcadeLauncher()
-}
+launchWelcome()
 
 /**
  * Boots the default 3D spinning mark and overlays the interactive Arcade Menu.
  */
-function launchWelcomeWithArcadeLauncher() {
+function launchWelcome() {
   const EMBER = "#ea580c"
   const AMBER = "#fb923c"
 
@@ -197,50 +135,15 @@ function launchWelcomeWithArcadeLauncher() {
 
   engine.start()
 
-  // --- Interactive Arcade Launcher UI ---
+  // --- Interactive Welcome UI ---
   if (typeof document !== "undefined") {
     const launcher = document.createElement("div")
     launcher.className = "arcade-launcher-container"
     launcher.innerHTML = `
       <div class="arcade-hero">
         <div class="arcade-badge">⚡ Gamebox 3D Engine</div>
-        <h1>Production Game Arcade</h1>
-        <p>Choose any full production 3D game to play and test live in full fidelity:</p>
-      </div>
-
-      <div class="arcade-grid">
-        ${Object.values(GAMES_CATALOG)
-          .filter((game, index, self) => self.findIndex((g) => g.href === game.href) === index)
-          .map((t) => {
-            const controlsSummary = Object.entries(t.controls)
-              .map(
-                ([k, v]) => `
-                <div style="display:flex;justify-content:space-between;gap:8px;margin-bottom:2px;">
-                  <strong style="color:var(--amber);">${k}:</strong> <span>${v}</span>
-                </div>
-              `
-              )
-              .join("")
-
-            return `
-              <div class="arcade-card" onclick="window.location.href = '${t.href}'">
-                <div class="arcade-card-top">
-                  <span class="arcade-card-icon">${ICONS[t.id] || "🎮"}</span>
-                  <span class="arcade-genre-tag">${t.genre}</span>
-                </div>
-                <h2 class="arcade-card-title">${t.title}</h2>
-                <p class="arcade-card-desc">${t.description}</p>
-                <div class="arcade-card-controls">
-                  ${controlsSummary}
-                </div>
-                <button class="arcade-card-btn">
-                  <span>Play Full Game</span>
-                  <span>→</span>
-                </button>
-              </div>
-            `
-          })
-          .join("")}
+        <h1>Ready to Build</h1>
+        <p>Describe your game premise in the chat to generate and run your 3D world live.</p>
       </div>
     `
     document.body.appendChild(launcher)

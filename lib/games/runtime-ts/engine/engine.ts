@@ -1,7 +1,40 @@
 import * as THREE from "three"
+import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js"
 
-import type { Engine, EngineOptions, FogConfig, RenderTarget } from "./types.ts"
-import { clamp } from "./math.ts"
+import type {
+  Engine,
+  EngineOptions,
+  FogConfig,
+  RandomSource,
+  RenderTarget,
+  TestHooks,
+  TestHooksHandlers,
+} from "./types.ts"
+import { clamp, createRandom } from "./math.ts"
+import { HitstopManager } from "./game-feel.ts"
+
+/**
+ * Creates and applies a neutral RoomEnvironment IBL using PMREMGenerator.
+ * Physical/Standard PBR materials reflect realistic neutral ambient light without loading external HDRIs.
+ */
+export function setupNeutralEnvironment(
+  renderer: THREE.WebGLRenderer,
+  scene: THREE.Scene
+): THREE.Texture | null {
+  try {
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    pmrem.compileEquirectangularShader()
+    const room = new RoomEnvironment()
+    const envTarget = pmrem.fromScene(room)
+    scene.environment = envTarget.texture
+    room.dispose()
+    pmrem.dispose()
+    return envTarget.texture
+  } catch {
+    // In headless mock environments or when WebGL context is unavailable, fail silently
+    return null
+  }
+}
 
 /**
  * The renderer, scene, camera and frame loop, set up the way a game wants them.
@@ -42,27 +75,50 @@ export function createEngine(options: EngineOptions = {}): Engine {
     toneMapping = THREE.ACESFilmicToneMapping,
     exposure = 1,
     pauseWhenHidden = true,
+    environment = true,
   } = options
 
-  const renderer = new THREE.WebGLRenderer({
-    canvas: existingCanvas,
-    antialias,
-    alpha,
-    powerPreference: "high-performance",
-  })
-  renderer.setPixelRatio(
-    typeof window !== "undefined"
-      ? Math.min(window.devicePixelRatio, maxPixelRatio)
-      : 1
-  )
-  renderer.outputColorSpace = THREE.SRGBColorSpace
-  renderer.toneMapping = toneMapping
-  renderer.toneMappingExposure = exposure
+  const renderer =
+    options.renderer ??
+    (function (): THREE.WebGLRenderer {
+      try {
+        const r = new THREE.WebGLRenderer({
+          canvas: existingCanvas,
+          antialias,
+          alpha,
+          powerPreference: "high-performance",
+        })
+        r.setPixelRatio(
+          typeof window !== "undefined"
+            ? Math.min(window.devicePixelRatio, maxPixelRatio)
+            : 1
+        )
+        r.outputColorSpace = THREE.SRGBColorSpace
+        r.toneMapping = toneMapping
+        r.toneMappingExposure = exposure
 
-  if (shadows) {
-    renderer.shadowMap.enabled = true
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap
-  }
+        if (shadows) {
+          r.shadowMap.enabled = true
+          r.shadowMap.type = THREE.PCFSoftShadowMap
+        }
+        return r
+      } catch {
+        return {
+          domElement: existingCanvas ?? (typeof document !== "undefined" ? document.createElement("canvas") : ({} as HTMLCanvasElement)),
+          info: {
+            render: { calls: 0, triangles: 0, points: 0, lines: 0 },
+            memory: { geometries: 0, textures: 0 },
+          },
+          shadowMap: { enabled: false, type: 0 },
+          setPixelRatio: () => {},
+          getPixelRatio: () => 1,
+          setSize: () => {},
+          render: () => {},
+          setAnimationLoop: () => {},
+          dispose: () => {},
+        } as unknown as THREE.WebGLRenderer
+      }
+    })()
 
   const canvas = renderer.domElement
   if (!existingCanvas && container && typeof container.appendChild === "function") {
@@ -91,6 +147,22 @@ export function createEngine(options: EngineOptions = {}): Engine {
         fogConfig.far ?? 80
       )
     }
+  }
+
+  function applyEnvironment(envSetting: "neutral" | THREE.Texture | boolean | null): THREE.Texture | null {
+    if (envSetting === false || envSetting === null) {
+      scene.environment = null
+      return null
+    }
+    if (envSetting instanceof THREE.Texture) {
+      scene.environment = envSetting
+      return envSetting
+    }
+    return setupNeutralEnvironment(renderer, scene)
+  }
+
+  if (environment !== false) {
+    applyEnvironment(environment)
   }
 
   const camera = new THREE.PerspectiveCamera(fov, 1, near, far)
@@ -169,19 +241,61 @@ export function createEngine(options: EngineOptions = {}): Engine {
   }
   resize()
 
+  const hitstopManager = new HitstopManager()
+  let diagnosticsExtra: Record<string, unknown> = {}
+  let pausedForScreenshot = false
+  let reducedMotion = false
+  let currentRng = createRandom(1)
+  let activeTestHooks: TestHooks | undefined
+
+  function publishDiagnostics(extra?: Record<string, unknown>) {
+    if (extra) {
+      diagnosticsExtra = { ...diagnosticsExtra, ...extra }
+    }
+    if (typeof window !== "undefined") {
+      const info = renderer.info
+      const win = window as unknown as { __THREE_GAME_DIAGNOSTICS__?: Record<string, unknown> }
+      win.__THREE_GAME_DIAGNOSTICS__ = {
+        frame,
+        elapsed,
+        fps: Math.round(fps),
+        renderer: {
+          calls: info.render.calls,
+          triangles: info.render.triangles,
+          points: info.render.points,
+          lines: info.render.lines,
+          geometries: info.memory.geometries,
+          textures: info.memory.textures,
+        },
+        canvas: {
+          clientWidth: canvas.clientWidth || size.width,
+          clientHeight: canvas.clientHeight || size.height,
+          width: canvas.width || size.width,
+          height: canvas.height || size.height,
+          dpr: typeof renderer.getPixelRatio === "function" ? renderer.getPixelRatio() : 1,
+        },
+        ...diagnosticsExtra,
+      }
+    }
+  }
+
   function tick(timestamp?: number) {
     timer.update(timestamp)
     const raw = timer.getDelta()
-    if (paused) {
+    if (paused || pausedForScreenshot) {
       renderTarget.render()
+      publishDiagnostics()
       return
     }
 
-    const dt = clamp(raw, 0, MAX_DELTA) * engine.timeScale
+    const rawDt = clamp(raw, 0, MAX_DELTA)
+    const hitstopDt = hitstopManager.update(rawDt)
+    const dt = hitstopDt * engine.timeScale
     elapsed += dt
     frame++
     if (raw > 0) fps += (1 / raw - fps) * 0.1
 
+    engine.rawDt = rawDt
     engine.dt = dt
     engine.elapsed = elapsed
     engine.frame = frame
@@ -191,6 +305,66 @@ export function createEngine(options: EngineOptions = {}): Engine {
     for (const fn of lateUpdates) fn(dt, elapsed)
 
     renderTarget.render()
+    publishDiagnostics()
+  }
+
+  function installTestHooks(handlers: TestHooksHandlers = {}): TestHooks {
+    const hooks: TestHooks = {
+      seed: (value: number) => {
+        currentRng = createRandom(value)
+        engine.rng = currentRng
+        handlers.onSeed?.(value)
+      },
+      setState: (name: string) => {
+        if (handlers.onSetState) {
+          const res = handlers.onSetState(name)
+          if (res && typeof res === "object" && "state" in res) return res
+        }
+        if (name === "active-play") {
+          pausedForScreenshot = false
+          engine.resume()
+          engine.timeScale = 1
+        } else if (name === "pause") {
+          engine.pause()
+        } else if (name === "complete") {
+          publishDiagnostics({ complete: true })
+        }
+        renderTarget.render()
+        publishDiagnostics()
+        return { state: name }
+      },
+      setPausedForScreenshot: (pausedVal: boolean) => {
+        pausedForScreenshot = pausedVal
+        handlers.onSetPausedForScreenshot?.(pausedVal)
+        renderTarget.render()
+        publishDiagnostics()
+      },
+      setReducedMotion: (enabled: boolean) => {
+        reducedMotion = enabled
+        engine.reducedMotion = enabled
+        handlers.onSetReducedMotion?.(enabled)
+        renderTarget.render()
+        publishDiagnostics()
+      },
+      hideDebugUi: (hidden: boolean) => {
+        handlers.onHideDebugUi?.(hidden)
+        if (typeof document !== "undefined" && typeof document.querySelectorAll === "function") {
+          const els = document.querySelectorAll<HTMLElement>(
+            "#debug-tools, .debug-panel, .lil-gui, .stats-js, #stats"
+          )
+          els.forEach((el) => {
+            el.style.display = hidden ? "none" : ""
+          })
+        }
+      },
+    }
+
+    if (typeof window !== "undefined") {
+      window.__THREE_GAME_TEST_HOOKS__ = hooks
+    }
+    activeTestHooks = hooks
+    engine.testHooks = hooks
+    return hooks
   }
 
   function onVisibility() {
@@ -210,6 +384,7 @@ export function createEngine(options: EngineOptions = {}): Engine {
     clock,
     timer,
     size,
+    rawDt: 0,
     dt: 0,
     elapsed: 0,
     frame: 0,
@@ -223,6 +398,14 @@ export function createEngine(options: EngineOptions = {}): Engine {
     get paused() {
       return paused
     },
+
+    hitstop(durationMs = 80, timeScale = 0.05) {
+      hitstopManager.trigger(durationMs, timeScale)
+    },
+    setupEnvironment(mode = "neutral") {
+      return applyEnvironment(mode)
+    },
+    publishDiagnostics,
 
     /** Runs every frame with the frame's delta in seconds. Returns an unsubscribe. */
     onUpdate(fn: (dt: number, elapsed: number) => void): () => void {
@@ -277,10 +460,36 @@ export function createEngine(options: EngineOptions = {}): Engine {
       renderTarget.setSize?.(size.width, size.height)
     },
 
+    get reducedMotion() {
+      return reducedMotion
+    },
+    set reducedMotion(val: boolean) {
+      reducedMotion = val
+    },
+    get rng() {
+      return currentRng
+    },
+    set rng(val: RandomSource) {
+      currentRng = val
+    },
+    get testHooks() {
+      return activeTestHooks
+    },
+    set testHooks(val: TestHooks | undefined) {
+      activeTestHooks = val
+    },
+    installTestHooks,
+
     dispose() {
       engine.stop()
       if (typeof window !== "undefined") {
         window.removeEventListener("resize", resize)
+        const win = window as unknown as {
+          __THREE_GAME_DIAGNOSTICS__?: unknown
+          __THREE_GAME_TEST_HOOKS__?: unknown
+        }
+        win.__THREE_GAME_DIAGNOSTICS__ = undefined
+        win.__THREE_GAME_TEST_HOOKS__ = undefined
       }
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibility)
@@ -292,6 +501,8 @@ export function createEngine(options: EngineOptions = {}): Engine {
       canvas.remove()
     },
   }
+
+  engine.installTestHooks()
 
   return engine
 }

@@ -8,16 +8,18 @@
  * things the signatures don't say — which primitive to reach for, and what
  * goes wrong when you don't.
  *
- * Kept in step with `@/lib/games/runtime/engine` by hand. If a module there
+ * Kept in step with `@/lib/games/runtime-ts/engine` by hand. If a module there
  * grows an export worth using, it belongs in this list too; an undocumented
  * primitive is one the agent will rewrite from scratch.
  */
 export const engine = `# The engine
 
 engine/ is a 3D game toolkit, already on disk, built on three.js. It exists
-because every browser game needs the same a hundred lines before it needs
+because every browser game needs the same hundred lines before it needs
 anything of its own — colour space, pixel ratio, a resize handler, a delta-timed
-loop, input that can tell held from just-pressed — and writing those again per
+loop, input that can tell held from just-pressed, trauma-based screenshake,
+PBR material recipes, procedural canvas textures, authored model factories,
+two-layer HUD meters, and audio mixer channels — and writing those again per
 game is both slower and worse than importing them.
 
 Use it. Reading these instead of reinventing them is the difference between a
@@ -25,287 +27,409 @@ first turn that produces a game and one that produces a renderer.
 
 Import from the barrel, which re-exports everything:
 
-  import { createGame, models, lights, materials, math } from "./engine/index.ts"
+  import {
+    createGame,
+    models,
+    lights,
+    materials,
+    math,
+    gameFeel,
+    CameraRig,
+    createMaterialKit,
+  } from "./engine/index.ts"
 
 ## The whole shape of a game
 
-  import { createGame, models, lights, ease } from "./engine/index.ts"
+  import { createGame, lights, ease, createHeroCharacter, CameraRig, createMaterialKit } from "./engine/index.ts"
 
   const game = createGame({
     background: "#0b1020",
     cameraPosition: [0, 6, 12],
-    actions: { dash: ["ShiftLeft"] },
+    actions: { dash: ["ShiftLeft"], fire: ["Space", "Mouse0"] },
   })
 
-  lights.sunset(game.scene)
-  game.add(models.ground(80))
+  // 1. Atmosphere & Lighting (sunset key, fill, bounce, shadow map, neutral IBL)
+  lights.sunset(game.scene, { area: 40 })
 
-  const player = models.character()
-  game.add(player)
+  // 2. Cohesive Material Kit
+  const materialsKit = createMaterialKit({ primary: "#1e293b", trim: "#ea580c" })
 
+  // 3. Authored Hero Model (never a placeholder cube!)
+  const player = createHeroCharacter({ colors: { suit: "#1e293b", armor: "#334155", visor: "#06b6d4" } })
+  game.add(player.root)
+
+  // 4. AAA Camera Rig with lag damping, lookAhead, and built-in trauma shake
+  const cameraRig = new CameraRig(game.camera, { distance: 10, height: 4.5, lag: 0.16 })
+  cameraRig.snapTo(player.root.position)
+
+  // 5. Game Loop with delta, input, game feel, and diagnostics
   game.onUpdate((dt, elapsed) => {
-    player.position.x += game.input.move.x * 6 * dt
-    if (game.input.pressed("jump")) game.audio.play("jump")
+    player.root.position.x += game.input.move.x * 8 * dt
+    player.root.position.z += game.input.move.y * 8 * dt
+
+    if (game.input.pressed("dash")) {
+      cameraRig.punchFov(6)
+      game.audio.play("dash")
+    }
+
+    if (game.input.pressed("fire")) {
+      game.audio.playWithCooldown("laser", 120, { vary: 0.1 })
+    }
+  })
+
+  game.onLateUpdate((dt) => {
+    cameraRig.update(dt, player.root.position)
   })
 
 That is a running, lit, input-driven scene. \`createGame\` starts the loop
 itself — there is nothing to call afterwards, and no reason for a game to open
 on a still frame.
 
-\`createGame(options)\` returns { engine, input, hud, audio, tweens, scene,
-camera, renderer, onUpdate, onLateUpdate, onResize, add, remove }.
+\`createGame(options)\` returns:
+  { engine, input, hud, audio, tweens, scene, camera, renderer, onUpdate, onLateUpdate,
+    onResize, add, remove, hitstop, publishDiagnostics, rng, testHooks, installTestHooks }
 
-Options: background, fog ({ color, near, far } or a number for exponential
-fog), fov, near, far, cameraPosition, lookAt, shadows, exposure, maxPixelRatio,
-antialias, alpha, pauseWhenHidden, actions.
+Options: background, fog ({ color, near, far } or exponential number), fov, near, far,
+cameraPosition, lookAt, shadows, exposure, maxPixelRatio, antialias, alpha, pauseWhenHidden,
+actions, environment (defaults to neutral IBL).
 
-## engine — the loop
+## engine — the loop & test hooks
 
-\`game.engine\` carries dt, elapsed, frame, fps, paused, and timeScale (set it
-to 0.3 for slow motion, 0 to freeze while still rendering).
+\`game.engine\` carries dt, rawDt, elapsed, frame, fps, paused, timeScale, and rng.
+- \`rawDt\` — real unscaled delta in seconds. Cameras, shake rigs, and feedback tweens
+  read rawDt so screen feel stays live during hitstops!
+- \`dt\` — simulation delta in seconds (scaled by timeScale and hitstopManager).
+- \`game.hitstop(durationMs, timeScale)\` — freezes or crawls gameplay delta (e.g. 70ms at 0.05)
+  on heavy impacts while keeping camera and HUD alive.
+- \`game.publishDiagnostics(extra)\` — publishes renderer draw calls, triangle count, geometries,
+  textures, canvas DPR, frame, and game state to \`window.__THREE_GAME_DIAGNOSTICS__\`.
+- \`game.testHooks\` & \`game.installTestHooks(handlers)\` — automatically installed on
+  \`window.__THREE_GAME_TEST_HOOKS__\` so QA playtest bots and screenshot visual regression tools
+  can drive the game deterministically via \`seed(N)\`, \`setState(name)\`, \`setPausedForScreenshot(bool)\`,
+  \`setReducedMotion(bool)\`, and \`hideDebugUi(bool)\`.
+- \`setupNeutralEnvironment(renderer, scene)\` — sets up RoomEnvironment IBL for PBR materials without HDRIs.
+- onUpdate(fn), onLateUpdate(fn), onResize(fn), start(), stop(), pause(), resume(), dispose().
+- disposeObject(obj) — frees GPU geometry and texture memory.
 
-- onUpdate(fn) — every frame, fn(dt, elapsed). Returns an unsubscribe.
-- onLateUpdate(fn) — after every onUpdate. Cameras belong here, so they follow
-  where things ended up rather than where they started.
-- onResize(fn), start(), stop(), pause(), resume(), dispose().
-- disposeObject(obj) — frees the GPU memory behind an object and its children.
-  Geometries and textures are not garbage collected; a game that rebuilds a
-  level every round leaks until the tab dies without this.
+## gameFeel — juice, impact, and screenshake
 
-Never write your own requestAnimationFrame loop. dt is already clamped so a
-backgrounded tab doesn't return with a two-second frame that throws everything
-through the floor.
+Game feel is communication, not decoration. Every hit, pickup, dash, and explosion must feel physical:
 
-## input — keyboard, mouse, touch, gamepad
+- \`ShakeRig\` — trauma-based screenshake. Shake is \`trauma²\` with linear 1.4/s decay and deterministic
+  value noise. Recommended trauma: pickup 0.15, hit 0.4, explosion 0.7.
+    const shake = new ShakeRig()
+    shake.addTrauma(0.5)
+    shake.update(rawDt, camera)
+- \`HitstopManager\` — scales gameplay delta to 0.05 for 60-90ms on heavy contact.
+- \`squashAndStretch(target, squashY, durationSec)\` — volume-preserving deformation (x * y * z ≈ 1)
+  with \`easeOutBack\` overshoot settle. Use 1.15 stretch on jump takeoff, 0.88 squash on landing.
+- \`FovPuncher\` — additive FOV kick (e.g. +6°) on boost or hit with exponential recovery.
+- \`flashHit(material, peakIntensity, durationSec)\` — emissive flare preserving material base emissive.
+- \`TweenManager\` — delta-driven tween runner:
+    tweens.tween(0.3, (t) => { obj.scale.setScalar(t) }, easeOutBack)
+- \`rumble(durationMs, strong, weak)\` — gamepad dual-rumble haptic feedback.
 
-One snapshot per frame, so the game asks questions instead of handling events.
+## camera — CameraRig & controllers
 
-- input.move — Vector2, already normalised, from WASD, arrows, a gamepad stick
-  or a thumb drag on the left half of a touch screen. Diagonals are not faster.
-- input.down(action) / pressed(action) / released(action). \`pressed\` is true
-  for exactly one frame — use it for jumps, shots and menu choices; \`down\` for
-  movement. Wiring a jump to \`down\` is what makes a character fly.
-- input.axis("left", "right"), input.bind(name, codes), input.press(code).
-- input.pointer — Vector2 in clip space, ready for a raycaster.
-- input.look — mouse travel this frame; the only thing that works under pointer
-  lock. input.requestPointerLock().
+- \`CameraRig(camera, options)\` — professional follow camera with exponential lag damping,
+  velocity lookAhead, integrated \`ShakeRig\`, and \`FovPuncher\`:
+    const rig = new CameraRig(camera, { distance: 12, height: 5, lag: 0.16, lookAhead: 0.8 })
+    rig.update(dt, player.position, playerVelocity)
+    rig.addTrauma(0.4)
+    rig.punchFov(5)
+- \`createChaseCamera(camera, options)\` — relative-space chase camera with horizon roll banking.
+- \`followCamera\`, \`topDownCamera\`, \`sideCamera\`, \`orbitCamera\` — legacy camera controllers.
+- Controllers: \`firstPerson\`, \`thirdPerson\`, \`platformer\`, \`pointerOnGround\`, \`pointerPicker\`.
 
-Actions already bound: left, right, up, down, jump, fire, sprint, crouch,
-pause, restart. Add your own via the \`actions\` option or \`bind\`.
+## materials — AAA PBR & procedural textures
 
-## controls — cameras and characters
+Never use flat unshaded default materials. Use the PBR library:
 
-Cameras (all smoothed, all framerate-independent):
+- **AAA PBR Recipes**:
+  \`paintedMetal\`, \`brushedMetal\`, \`rubber\`, \`mattePlastic\`, \`glossyCeramic\`,
+  \`emissiveSignal\` (dark base feeds intense bloom), \`cloth\`, \`cheapGlass\`, \`refractiveGlass\`.
+- **Cohesive Material Kit**:
+  \`createMaterialKit(options)\` generates named shared roles:
+  \`bodyPrimary\`, \`bodySecondary\`, \`trim\`, \`hazard\`, \`reward\`, \`shieldBoost\`,
+  \`glass\`, \`emissiveSignal\`, \`groundContact\`, \`decalDark\`, \`decalLight\`.
+- **Procedural Canvas Textures** (always RepeatWrapping + SRGBColorSpace):
+  \`trimSheet({ rows, accentColor })\`, \`hazardStripes({ stripeWidth })\`,
+  \`panelLines({ size, divisions })\`, \`stoneTiles({ size, rows, cols })\`, \`noiseGrain({ size, opacity })\`.
+- **Shader Hooks & Sky**:
+  \`applyFresnelRim(material, { rimColor, power })\`, \`applyScrollingEmissive(material, { speed, color })\`,
+  \`applyWindSway(material, { speed, amplitude })\`, \`createSkyDome(scene, { topColor, horizonColor, sunColor })\`.
 
-- followCamera(engine, target, { distance, height, stiffness }) — third-person
-  chase, with .shake(amount) for impacts.
-- topDownCamera / sideCamera — twin-stick and platformer views. sideCamera has
-  a deadzone so small hops don't bob the view.
-- orbitCamera(engine, { autoRotate }) — mouse orbit, for menus and viewers.
+## models & assets — authored geometry factories
 
-Controllers (pass a physics \`body\` and they move it; without one they move the
-object directly):
+Never drop bare colored boxes into a scene. Use authored factories with articulated parts and collision bounds:
 
-- firstPerson(engine, input, { body, speed, jump }) — mouse look, WASD, head bob.
-- thirdPerson(engine, input, object, { body }) — moves in camera space and
-  turns to face travel. \`.travel\` is 0..1, for driving a walk cycle.
-- platformer(engine, input, object, { body }) — with coyote time, a jump buffer
-  and variable jump height already in it. These three are what separate a
-  platformer that feels tight from one that feels like it drops inputs.
-- pointerOnGround(engine, input) — a function returning where the cursor meets
-  the ground plane. Aiming, click-to-move, placement.
-- pointerPicker(engine, input, objects) — what's under the cursor.
+- \`createHeroVehicle(options)\` — aerodynamic hull with cockpit canopy, twin thrusters with emissive nozzles,
+  tapered wings with trim bevels, undercarriage skids, and collision proxy.
+- \`createHeroCharacter(options)\` — stylized articulated character with torso, head visor, shoulders,
+  elbows, hips, knees, and armor plates grouped under named animation pivots.
+- \`createObstacle(type, options)\` — authored hazard families: "barrier", "gate", "mine", "turret"
+  with danger telegraphs, caution stripes, and collision bounds.
+- \`createReward(type, options)\` — authored collectible families: "token", "shard", "capsule"
+  with outer frame, glowing core, and bob/spin animations.
+- \`createWorldPropKit(options)\` — modular instanceable props: road tiles, arena rails, light pylons, crates, rocks.
+- \`getModelDiagnostics(root)\` — returns mesh, material, geometry, and triangle count.
+- \`models.loadModel(url, options)\` — loads Draco-compressed GLB / GLTF models.
+- \`instances(geometry, material, count)\`, \`merge(meshes)\`, \`createPool(factory, { size })\`.
 
-## physics — arcade collision
+## hud — modern game UI (not a web dashboard)
 
-createPhysics({ gravity }) is not a rigid-body simulation, and does not want to
-be. It does the four things games need: don't fall through the floor, don't walk
-through walls, slide along them rather than stopping dead, and say when two
-things touched.
+Styles and fonts are pre-injected. Fixed-width numerals prevent layout jitter during fast score updates:
 
-  const world = createPhysics()
-  world.addGround(0)
-  world.addBox(wallMesh)          // static, from any mesh's bounding box
-  world.addArena(models.arena(40))
-  const body = world.addBody({ object: player, radius: 0.5, height: 1.8 })
-  game.onUpdate((dt) => world.step(dt))
+- \`createHealthBar({ current, max, showShield, shield })\` — two-layer meter with delayed damage trail
+  and cyan shield segment. Also available via \`game.hud.healthBar(...)\`.
+- \`createObjectiveCard({ title, current, total, timeRemaining })\` — objective progress card with timer.
+- \`createScoreBadge({ score, highScore, combo })\` — animated bump score badge with combo multiplier tag.
+- \`createModalOverlay({ title, type, stats, actions })\` — responsive Victory / Game Over / Pause modal
+  with stat grids and keyboard listeners.
+- \`createTouchControls({ onMove, onAction, onlyOnTouch })\` — virtual analog thumbstick with pointer capture
+  and action buttons (\`touch-action: none\`).
+- Standbys: \`hud.stat\`, \`hud.toast\`, \`hud.banner\`, \`hud.flash\`, \`hud.marker\`.
 
-Bodies are vertical capsules — the shape that rounds a corner and rides a step
-without catching. A body has position, velocity, grounded, contacts and onLand.
-Set velocity.x/z outright for walking (adding force makes a character coast
-after the key is released); set velocity.y once for a jump.
+\`\`\`ts
+// 10-line Complete HUD Setup:
+const healthBar = game.hud.healthBar({ label: "PLAYER HP", max: 100, current: 100, showShield: true })
+const objective = game.hud.objectiveCard({ title: "MISSION", total: 10, current: 0 })
+const scoreBadge = game.hud.scoreBadge({ score: 0, combo: 1 })
 
-\`addBody({ trigger: true, onEnter, onExit })\` detects without blocking —
-pickups, checkpoints, damage zones. Also: world.raycast, world.groundAt (for
-terrain the box colliders can't describe), and \`hits(a, b, rA, rB)\` for
-bullets that need no body at all.
+// Non-blocking intro banner on frame 1 (never show blocking modals!):
+game.hud.banner("BATTLE STATIONS", "Defend the core generators!")
 
-For real rigid-body simulation (marbles, pinball, mini-golf, rolling balls,
-physics puzzles, or stacks), use the pre-installed \`@dimforge/rapier3d-compat\`
-(load \`threejs-gameplay-systems\` for Rapier architecture and fixed-timestep loop).
-For fast arcade feel (runners, shooters, platformers, dogfights), \`createPhysics()\`
-is faster, simpler, and feels tighter.
+// Update during game loop:
+healthBar.setHealth(player.hp, 100)
+objective.setProgress(defeatedCount, 10)
+scoreBadge.setScore(gameScore, currentCombo)
+\`\`\`
 
-## models — things to put in the scene
+## sound — Web Audio synthesiser & studio mixer
 
-Primitives and prefabs for rapid assembly. For premium/AAA games, do not stop
-at unrefined primitives — consult \`threejs-aaa-graphics-builder\` to author
-multi-part silhouettes, PBR materials, and custom kits.
+Zero audio loading delays. Never write custom \`AudioContext\` classes or \`audio.ts\` managers. Everything is synthesised on demand or streamed cleanly through \`game.audio\`:
 
-Primitives, shadows already configured: box (with a \`radius\` for rounded
-corners), sphere, cylinder, cone, capsule, torus, ground (checkered by default,
-because a flat-coloured floor gives the player no sense of speed), arena (four
-walls, feedable straight to physics).
+- **Channel Groups**: \`master\`, \`sfx\`, \`ui\`, \`ambience\`, \`voice\`, \`music\`.
+  \`audio.getGroupVolume(grp)\`, \`audio.setGroupVolume(grp, vol)\`, \`audio.muteGroup(grp, bool)\`.
+- **Ducking**: \`audio.duck(factor, durationSec)\` — temporarily ducks music and ambience during
+  hitstops or speech.
+- **Cooldown Protection**: \`audio.playWithCooldown(name, cooldownMs, config)\` — eliminates repetitive
+  machine-gun audio on rapid firing or collisions.
+- **3D Spatial Audio**: \`audio.playAt(name, soundPosition, listenerPositionOrCamera, { maxDistance })\`
+  with distance attenuation and stereo panning.
+- **Sound Vocabulary**:
+  - UI: \`hover\`, \`confirm\`, \`cancel\`, \`pause\`, \`click\`, \`blip\`, \`select\`
+  - Movement: \`jump\`, \`land\`, \`dash\`, \`boost\`, \`drift\`
+  - Interaction: \`coin\`, \`pickup\`, \`hit\`, \`hurt\`, \`shield\`, \`score\`, \`checkpoint\`
+  - Threat: \`laser\`, \`shoot\`, \`explosion\`, \`alarm\`, \`warning\`, \`impact\`
+  - Fanfare: \`win\`, \`lose\`, \`powerup\`, \`whoosh\`, \`thud\`
+  - Pass \`{ vary: 0.1 }\` to add slight pitch jitter so repeated sounds stay lively!
+- **Streaming Music**: \`audio.playMusic(url, { loop, fadeIn })\` and \`audio.stopMusic(fadeOut)\`.
 
-Prefabs: crate, coin (spins and hovers), tree, rock (never twice the same),
-cloud, vehicle, ring, label (text that always faces the camera), and
-character — a blocky humanoid whose .userData.parts holds head, body, arms and
-legs, and whose .userData.animate(elapsed, speed) is a walk cycle.
+\`\`\`ts
+// Play SFX with cooldown and pitch variance:
+game.audio.playWithCooldown("laser", 120, { vary: 0.15, volume: 0.8 })
+game.audio.play("explosion")
 
-Scale:
-- instances(geometry, material, count) — one draw call for thousands of copies,
-  with .place(i, position, { scale, rotation }). Grass, stars, bullets, debris.
-  A thousand separate meshes is a thousand draw calls and a slideshow.
-- merge(meshes) — welds static scenery into one geometry.
-- createPool(factory, { size }) — take() and give() instead of new and discard.
-  Spawning a bullet per shot allocates, and the collection pause lands as a
-  stutter exactly when the screen is busiest.
+// Stream generated music track cleanly:
+game.audio.playMusic("./assets/audio/theme.mp3", { loop: true, fadeIn: 1.5, volume: 0.4 })
 
-loadModel(url) and loadTexture(url) exist for a CDN url you are sure of.
+// Define custom procedural sound recipes if unique audio is needed:
+game.audio.define("thunder", () => {
+  game.audio.noise({ duration: 0.5, frequency: 350, sweep: -200, gain: 0.6 })
+  game.audio.tone({ frequency: 90, slide: -40, duration: 0.35, type: "sawtooth" })
+})
+\`\`\`
 
-## materials — surfaces and textures drawn in code
+## 3d aiming & crosshair convergence (preventing weapon parallax)
 
-standard, matte, metal, glow (emissive; pair with bloom), flat (unlit), toon
-(cel shading), glass, wireframe, outline(mesh) — a dark backface shell, the
-cheapest good outline there is.
+In first-person or third-person shooters, weapons are held down and to the side (e.g. \`x: +0.4, y: -0.3\`). Never fire parallel to the camera vector, or the shot will permanently miss the crosshair! Always **converge** the projectile toward the camera's aim point:
 
-There is no art in the sandbox, so textures are generated: checkerTexture,
-gridTexture, noiseTexture, gradientTexture, sparkTexture, textTexture, and
-skyGradient(scene, top, bottom) — one call, and the single clearest tell of an
-unfinished scene is gone.
+\`\`\`ts
+// 1. Raycast or project forward from camera center to find the aim target in the distance:
+const cameraForward = camera.getWorldDirection(new THREE.Vector3())
+const aimTarget = camera.position.clone().add(cameraForward.multiplyScalar(60))
 
-Colour: \`palette\` (red through violet, plus sand, sky, night), \`brand\` (the
-product's own orange), mix(a, b, t), shade(color, amount).
+// 2. Compute projectile direction from weapon muzzle to the aim target:
+const shootDir = aimTarget.sub(weaponMuzzleWorldPos).normalize()
 
-## lights — rigs, not lights
+// 3. Spawn projectile along convergent direction:
+spawnProjectile(weaponMuzzleWorldPos, shootDir)
+\`\`\`
 
-daylight, sunset, night, studio, moody. Each is a complete answer — key, fill,
-bounce, and a shadow camera sized to the play area, which is the part that goes
-wrong by hand: too big and shadows go blocky, too small and they vanish at the
-edge of the level. Pass \`area\` to match your play space.
+## entity caching & memory hygiene (hero switching & waves)
 
-Also attachLight(object) for a torch or a muzzle flash, and blobShadow(scene,
-target) — the cheap round shadow under a character, which reads better than a
-shadow map for anything moving fast and costs nothing.
+Never reallocate \`THREE.BufferGeometry\` buffers when switching heroes or spawning waves:
 
-## hud — the DOM over the canvas
+\`\`\`ts
+// Cache compound models in a dictionary:
+const heroCache: Record<string, THREE.Group> = {}
 
-createHud(), or \`game.hud\`. Styles are injected, so it looks finished already.
-Clicks fall through to the canvas except on buttons.
+function switchHero(heroId: string) {
+  activeHero.visible = false
+  if (!heroCache[heroId]) {
+    heroCache[heroId] = buildHeroRig(heroId)
+    game.scene.add(heroCache[heroId])
+  }
+  heroCache[heroId].position.copy(activeHero.position)
+  heroCache[heroId].visible = true
+  activeHero = heroCache[heroId]
+}
 
-stat(label, value) — a number that bumps when it changes, which is most of the
-feedback a score needs. bar(label, { value, max }) — goes red as it empties.
-text, toast (fades itself), banner (big centre punch), overlay({ title, body,
-buttons }) for game over and pause, button, crosshair, keys({ WASD: "move" }) —
-the fastest way to teach controls without a tutorial — touchButtons, flash(color)
-for damage, and marker(engine, target, text) to pin DOM to a world position.
+// When dynamically destroying enemies or particles, dispose GPU memory:
+engine.disposeObject(mesh)
+\`\`\`
 
-Positions are corners: "top-left", "top-center", "top-right", "center",
-"bottom-left", "bottom-center", "bottom-right".
+## physics — arcade collision vs Rapier
 
-## sound — synthesised, never loaded
+- \`createPhysics({ gravity })\` — fast, tight arcade collision:
+  \`world.addGround(y)\`, \`world.addBox(mesh)\`, \`world.addBody({ radius, height })\`,
+  \`addBody({ trigger: true, onEnter, onExit })\`, \`world.raycast()\`, \`hits(a, b, rA, rB)\`.
+- For real rigid-body simulation (pinball, billiards, rolling balls, destructibles), use
+  pre-installed \`@dimforge/rapier3d-compat\` with a fixed timestep accumulator (\`1/60\`).
 
-createAudio(), or \`game.audio\`. Every sound is generated by the Web Audio API
-at the moment it plays, so nothing can fail to load. It unlocks itself on the
-player's first interaction, which is a browser rule and the usual reason a game
-"has no sound".
+## state — game lifecycle & state machine (Loading → Start → Playing → Pause → Over/Victory)
 
-audio.play(name) where name is one of: click, blip, select, coin, jump, land,
-hit, hurt, laser, shoot, explosion, powerup, win, lose, step, whoosh, thud,
-alarm. Pass { vary: 0.1 } on anything that fires repeatedly — repetition is what
-makes an effect grating, and a few percent of pitch wander fixes it entirely.
+Every game must manage its full lifecycle cleanly without screen flicker or lingering game logic after death/victory:
 
-Build your own with tone({ frequency, type, duration, slide }) and
-noise({ frequency, sweep }), register it with audio.define(name, fn), and
-audio.music.start({ notes, tempo }) for a bed underneath.
+\`\`\`ts
+// Professional 5-State Game Lifecycle:
+let startModal: any = null
+let pauseModal: any = null
+let endModal: any = null
 
-## animation — tweens, springs, feedback
+const fsm = createStateMachine({
+  // 1. Loading: Preload textures/audio and pre-compile shaders to eliminate flicker & lag
+  loading: {
+    enter() {
+      // Pre-compile all scene materials and shaders into GPU cache:
+      renderer.compile(scene, camera)
+      // Transition to Start screen once assets & shaders are ready:
+      fsm.go("start")
+    }
+  },
 
-createTweens(engine), or \`game.tweens\`.
+  // 2. Start Screen: Tells controls, narrative premise, and unlocks Web Audio on click
+  start: {
+    enter() {
+      startModal = createModalOverlay({
+        title: "STELLAR DEFENDER",
+        type: "info",
+        subtitle: "Defend the core reactor from rogue automated drones.",
+        stats: [
+          { label: "Movement", value: "WASD / Arrows" },
+          { label: "Aim & Fire", value: "Mouse / Left Click" },
+          { label: "Dash Boost", value: "Space / Shift" },
+          { label: "Pause Menu", value: "P / Esc" }
+        ],
+        actions: [{
+          label: "START MISSION",
+          onClick: () => {
+            startModal?.remove()
+            // Unlocks audio and streams BGM cleanly on user gesture:
+            game.audio.playMusic("./assets/audio/theme.mp3", { loop: true, fadeIn: 1 })
+            fsm.go("playing")
+          }
+        }]
+      })
+    }
+  },
 
-  await tweens.to(chest.position, { y: 2 }, { duration: 0.4, ease: ease.outBack })
+  // 3. Playing: 60 FPS responsive active gameplay
+  playing: {
+    enter() {
+      engine.resume()
+    }
+  },
 
-Tweens land on exactly the value asked for and resolve a promise, so sequences
-read as await rather than nested callbacks. \`ease\` carries the usual curves;
-outBack and outElastic overshoot, which is what makes a pickup or a menu pop
-land instead of merely arrive.
+  // 4. Paused: Freeze gameplay simulation while keeping UI responsive
+  paused: {
+    enter() {
+      engine.pause()
+      pauseModal = createModalOverlay({
+        title: "GAME PAUSED",
+        type: "pause",
+        actions: [
+          { label: "RESUME", onClick: () => { pauseModal?.remove(); fsm.go("playing") } },
+          { label: "RESTART", onClick: () => { pauseModal?.remove(); resetGame(); fsm.go("playing") } }
+        ]
+      })
+    },
+    exit() {
+      pauseModal?.remove()
+    }
+  },
 
-Spring / SpringVec3 for a target that keeps moving. createShake(object) for
-impacts — 0.15 for a footstep, 0.5 for an explosion, and always over inside
-half a second. flash(object) — the emissive blink that makes a hit visible;
-without it, damage in 3D is invisible. pop(object, tweens) for squash and
-stretch. hover(object) so nothing in the scene is ever perfectly still.
-createMixer(model, clips) plays GLTF animations by name with crossfades.
+  // 5. Game Over / Victory: Simulation MUST be completely stopped
+  over: {
+    enter(payload: { won?: boolean; score: number; time: number }) {
+      // Playing logic is fully halted (see guard in onUpdate below!)
+      endModal = createModalOverlay({
+        title: payload.won ? "VICTORY ACHIEVED" : "MISSION FAILED",
+        type: payload.won ? "victory" : "defeat",
+        subtitle: payload.won ? "All enemy threats eliminated!" : "The core was destroyed.",
+        stats: [
+          { label: "Final Score", value: payload.score },
+          { label: "Time Survived", value: \`\${Math.round(payload.time)}s\` }
+        ],
+        actions: [{
+          label: "PLAY AGAIN",
+          onClick: () => {
+            endModal?.remove()
+            resetGame()
+            fsm.go("playing")
+          }
+        }]
+      })
+    }
+  }
+}, "loading", engine)
 
-## effects — particles
+// Key listeners for Pause (Esc/P) and Restart (R):
+window.addEventListener("keydown", (e) => {
+  if (e.code === "Escape" || e.code === "KeyP") {
+    if (fsm.is("playing")) fsm.go("paused")
+    else if (fsm.is("paused")) fsm.go("playing")
+  } else if (e.code === "KeyR" && (fsm.is("over") || fsm.is("paused"))) {
+    endModal?.remove()
+    pauseModal?.remove()
+    resetGame()
+    fsm.go("playing")
+  }
+})
 
-createParticles(engine, { max }) is one Points object with a fixed buffer, so a
-burst of hundreds costs one draw call and zero allocations.
+// IN THE GAME LOOP: CRITICAL SIMULATION HALT GUARD
+engine.onUpdate((dt) => {
+  // Completely stops player movement, enemy updates, spawns, and timers when not playing!
+  if (!fsm.is("playing")) return
 
-fx.burst(position, { count, color, speed, lifetime }), fx.spray(position,
-direction) for muzzle flashes and thrusters, fx.smoke(position),
-fx.stream(position, dt, { rate }) for a continuous emitter.
+  updatePlayer(dt)
+  updateEnemies(dt)
+  checkCollisions()
+  hud.update()
+})
+\`\`\`
 
-Also shockwave(engine, position) — an expanding ring, which reads far more
-clearly than particles for anything with a radius — createTrail(engine, target),
-and createAmbience(engine, { follow }) for drifting dust or stars.
+- \`createScore({ hud, key })\` — automatically syncs high score to localStorage.
+- \`createStorage(ns)\` — never throws in private browser windows.
+- \`createTimer\`, \`createTicker\`, \`createCooldown\`, \`createDifficulty\`, \`createEvents\`.
 
-## state — the part that isn't 3D
+## math & seeded RNG
 
-createStateMachine({ playing: { enter, update, exit }, over: {...} }, "playing",
-engine) — one named state instead of four booleans, three of which can be true
-at once. .go(name) is safe to call from an update.
+- \`createSeededRandom(seed)\` — deterministic seeded RNG function for reproducible playtests and visual QA.
+- \`clamp\`, \`lerp\`, \`inverseLerp\`, \`remap\`, \`damp(current, target, lambda, dt)\`, \`smoothstep\`,
+  \`angleDelta\`, \`deadzone\`, \`randRange\`, \`randSpread\`, \`pick\`, \`shuffle\`, \`ease\`.
 
-createScore({ hud }) keeps a high score in localStorage — the whole reason to
-replay a small game, and the thing most often forgotten. createStorage(ns) never
-throws, so a private window still plays. createTimer, createTicker(interval, fn)
-— fires the right number of times whatever the framerate — createCooldown,
-createDifficulty (a game whose spawn rate never changes is over as a challenge
-the moment it is understood), createEvents, formatTime.
+## Golden Rules
 
-## postfx and debug
-
-createPostFX(engine, { bloom: { strength, threshold } }) — bloom is what makes
-an emissive material read as glowing rather than painted bright, and is the
-reason neon, lasers and power-ups look like themselves. It turns itself off on
-phones, where it costs more than it gives. Keep the threshold high (0.9-ish);
-a low one blooms the whole image into fog.
-
-debug.showStats(engine) for fps and draw calls, showHelpers, showColliders. Take
-them out before the turn ends.
-
-## math
-
-clamp, lerp, remap, smoothstep, wrap, angleDelta, deadzone, moveTowards,
-randRange, randInt, randSpread, pick, shuffle, chance, createRandom(seed) for
-levels that differ every run but replay identically, ease, TAU, DEG.
-
-damp(current, target, lambda, dt) and dampVec are the ones to internalise. The
-naive \`x += (target - x) * 0.1\` moves ten times further per second at 120fps
-than at 12, so a game tuned on one machine feels wrong on another. Anything
-smoothed should go through damp.
-
-## Rules
-
-- Import from engine/; don't edit it. If something it does isn't what a game
-  needs, wrap it or write the game's own version in the game's own file.
-- Read the module before guessing at an API. These files are on disk and
-  read_file is cheaper than a broken game.
-- Anything moved per frame is multiplied by dt. Anything smoothed goes through
-  damp or a spring. No exceptions — both bugs only show up on hardware you
-  cannot test on.
-- Prefer a primitive over reinventing one: instances over many meshes, a pool
-  over spawning, a state machine over booleans, hud over drawing text into 3D.`
+1. **Always use the toolkit**: Never reinvent screenshake, PBR materials, follow cameras, or health bars.
+2. **Never ship placeholders**: No bare cubes, spheres, or flat unlit planes. Use \`createHeroVehicle\`, \`createHeroCharacter\`, \`createMaterialKit\`, or authored geometry combinations.
+3. **Multiply movement by dt**: Any per-frame motion must use \`dt\`. Smoothed values use \`damp(..., dt)\`.
+4. **Always provide audio feedback**: Play varied audio on every jump, hit, dash, and score event via \`game.audio\`. NEVER author custom \`AudioContext\` classes.
+5. **Always converge weapon projectiles**: Raycast forward from camera center and converge weapon muzzle direction to the aim point to eliminate parallax error.
+6. **Route randomness through seeded RNG**: Use \`game.rng\` or \`createSeededRandom(seed)\` so test hooks and bot playtests remain deterministic.
+7. **Always enforce full game lifecycle**: Pre-warm shaders in loading (\`renderer.compile\`), display controls on Start Screen (unlocking audio on click), support pause (\`Esc\` / \`P\`), and completely halt simulation logic on Game Over or Victory.
+`
 
 export const engineInstructions = engine
 export default engine

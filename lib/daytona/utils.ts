@@ -227,11 +227,11 @@ export async function seedSandboxFiles(sandbox: Sandbox): Promise<void> {
   }
 }
 
-export const DEFAULT_DAYTONA_SNAPSHOT = "gamebox-runtime-v2"
+export const DEFAULT_DAYTONA_SNAPSHOT = "gamebox-runtime-v4"
 
 /**
  * Creates a Daytona sandbox for a game.
- * Uses a pre-built snapshot (e.g. gamebox-runtime-v2) if available for ~2.5s fast boot with zero file uploads.
+ * Uses a pre-built snapshot (e.g. gamebox-runtime-v4) if available for ~2.5s fast boot with zero file uploads.
  * If the snapshot is not found or fails, falls back gracefully to daytona-small + in-app seeding.
  * Stores the sandboxId on the game record and kicks off the background web server proactively.
  */

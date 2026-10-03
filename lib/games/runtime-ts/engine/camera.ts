@@ -1,4 +1,5 @@
 import * as THREE from "three"
+import { ShakeRig, FovPuncher } from "./game-feel.ts"
 
 export interface ChaseCameraOptions {
   distance?: number
@@ -145,3 +146,51 @@ export function createFirstPersonBob(options: FirstPersonBobOptions = {}) {
     },
   }
 }
+
+/**
+ * Unified CameraRig matching threejs-gameplay-systems / CameraRig.ts.
+ * Smoothly follows target with exponential damping, lookTarget lead,
+ * and built-in ShakeRig trauma screenshake and FOV punch.
+ */
+export class CameraRig {
+  private readonly desiredPosition = new THREE.Vector3()
+  private readonly lookTarget = new THREE.Vector3()
+  readonly shake = new ShakeRig()
+  readonly fovPunch: FovPuncher
+
+  constructor(
+    readonly camera: THREE.PerspectiveCamera,
+    readonly offset = new THREE.Vector3(0, 9.5, 9.5),
+    readonly lookOffset = new THREE.Vector3(0, 0.35, -1.2)
+  ) {
+    this.fovPunch = new FovPuncher(camera)
+  }
+
+  snapTo(target: THREE.Vector3): void {
+    this.desiredPosition.copy(target).add(this.offset)
+    this.camera.position.copy(this.desiredPosition)
+    this.lookTarget.copy(target).add(this.lookOffset)
+    this.camera.lookAt(this.lookTarget)
+  }
+
+  update(delta: number, target: THREE.Vector3, lag = 0.12): void {
+    this.desiredPosition.copy(target).add(this.offset)
+    const factor = 1 - Math.exp(-delta / Math.max(0.001, lag))
+    this.camera.position.lerp(this.desiredPosition, factor)
+    this.lookTarget.copy(target).add(this.lookOffset)
+    this.camera.lookAt(this.lookTarget)
+
+    // Update shake and FOV kick
+    this.shake.update(delta, this.camera)
+    this.fovPunch.update(delta)
+  }
+
+  addTrauma(amount: number): void {
+    this.shake.addTrauma(amount)
+  }
+
+  punchFov(degrees: number): void {
+    this.fovPunch.punch(degrees)
+  }
+}
+

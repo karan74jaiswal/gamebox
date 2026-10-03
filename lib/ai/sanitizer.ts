@@ -337,6 +337,28 @@ function getFilePathFromToolCall(part: ToolCallPart): string | undefined {
     const norm = normalizeFilePath(raw)
     return norm.length > 0 ? norm : undefined
   }
+  if (
+    part.toolName === "generate_texture" &&
+    typeof part.input === "object" &&
+    part.input !== null &&
+    "filename" in part.input
+  ) {
+    const raw = String((part.input as { filename?: unknown }).filename || "")
+      .replace(/^.*[/\\]/, "")
+      .replace(/\.[a-zA-Z0-9]+$/, "")
+    return `assets/textures/${raw}.png`
+  }
+  if (
+    part.toolName === "generate_music" &&
+    typeof part.input === "object" &&
+    part.input !== null &&
+    "filename" in part.input
+  ) {
+    const raw = String((part.input as { filename?: unknown }).filename || "")
+      .replace(/^.*[/\\]/, "")
+      .replace(/\.[a-zA-Z0-9]+$/, "")
+    return `assets/audio/${raw}.mp3`
+  }
   return undefined
 }
 
@@ -433,7 +455,9 @@ function resolveCrossTurnKeptToolCallIds(messages: ModelMessage[]): Set<string> 
         part.toolName === "read_file" ||
         part.toolName === "update_file" ||
         part.toolName === "replace_text" ||
-        part.toolName === "delete_file"
+        part.toolName === "delete_file" ||
+        part.toolName === "generate_texture" ||
+        part.toolName === "generate_music"
       ) {
         const filePath = getFilePathFromToolCall(part)
         if (filePath) {
@@ -455,7 +479,9 @@ function resolveCrossTurnKeptToolCallIds(messages: ModelMessage[]): Set<string> 
 
     if (
       lastEvent.toolName === "write_file" ||
-      lastEvent.toolName === "read_file"
+      lastEvent.toolName === "read_file" ||
+      lastEvent.toolName === "generate_texture" ||
+      lastEvent.toolName === "generate_music"
     ) {
       allowed.add(lastEvent.toolCallId)
     }
@@ -777,7 +803,9 @@ function resolveStepKeptToolCallIds(steps: StepUnit[]): Set<string> {
         part.toolName === "read_file" ||
         part.toolName === "update_file" ||
         part.toolName === "replace_text" ||
-        part.toolName === "delete_file"
+        part.toolName === "delete_file" ||
+        part.toolName === "generate_texture" ||
+        part.toolName === "generate_music"
       ) {
         const filePath = getFilePathFromToolCall(part)
         if (filePath) {
@@ -818,7 +846,9 @@ function resolveStepKeptToolCallIds(steps: StepUnit[]): Set<string> {
     for (let i = events.length - 1; i >= 0; i--) {
       if (
         events[i].toolName === "write_file" ||
-        events[i].toolName === "read_file"
+        events[i].toolName === "read_file" ||
+        events[i].toolName === "generate_texture" ||
+        events[i].toolName === "generate_music"
       ) {
         latestFullCopyIdx = i
         break

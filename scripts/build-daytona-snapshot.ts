@@ -7,7 +7,7 @@ import { getRuntimeSeedData } from "../lib/games/seed"
 config({ path: path.resolve(process.cwd(), ".env.local") })
 config({ path: path.resolve(process.cwd(), ".env") })
 
-const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "gamebox-runtime-v2"
+const SNAPSHOT_NAME = process.env.DAYTONA_SNAPSHOT_NAME || "gamebox-runtime-v4"
 const BASE_SNAPSHOT = process.env.DAYTONA_BASE_SNAPSHOT || "daytona-small"
 const GAME_DIR = process.env.GAME_DIR || "/home/daytona/game"
 

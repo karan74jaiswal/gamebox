@@ -256,6 +256,7 @@ export function formatToolDisplay(
             startLine?: unknown
             endLine?: unknown
             totalLines?: unknown
+            bytes?: unknown
           }
           if (
             typeof typed.startLine === "number" &&
@@ -270,6 +271,8 @@ export function formatToolDisplay(
             sizeInfo = ` (${typed.totalLines.toLocaleString()} lines)`
           } else if (typeof typed.content === "string") {
             sizeInfo = ` (${countLines(typed.content).toLocaleString()} lines)`
+          } else if (typeof typed.bytes === "number") {
+            sizeInfo = ` (${formatFileSize(typed.bytes)})`
           }
         }
         return {
@@ -308,6 +311,63 @@ export function formatToolDisplay(
       }
       return {
         action: "Failed to list files",
+      }
+    }
+
+    case "generate_texture": {
+      const filename =
+        typeof input?.filename === "string" ? input.filename : "texture"
+      const targetPath = `assets/textures/${filename.replace(/\.png$/, "")}.png`
+      const prompt = typeof input?.prompt === "string" ? input.prompt : ""
+      const shortPrompt =
+        prompt.length > 40 ? `${prompt.slice(0, 37)}...` : prompt
+
+      if (status === "active") {
+        return {
+          action: "Generating texture",
+          target: targetPath,
+          suffix: shortPrompt ? `("${shortPrompt}")...` : "...",
+        }
+      }
+      if (status === "done") {
+        return {
+          action: "Generated texture",
+          target: targetPath,
+          suffix: shortPrompt ? `("${shortPrompt}")` : undefined,
+        }
+      }
+      return {
+        action: "Failed to generate texture",
+        target: targetPath,
+      }
+    }
+
+    case "generate_music": {
+      const filename =
+        typeof input?.filename === "string" ? input.filename : "track"
+      const targetPath = `assets/audio/${filename.replace(/\.mp3$/, "")}.mp3`
+      const duration = input?.duration === "full" ? "full track" : "loop"
+      const prompt = typeof input?.prompt === "string" ? input.prompt : ""
+      const shortPrompt =
+        prompt.length > 40 ? `${prompt.slice(0, 37)}...` : prompt
+
+      if (status === "active") {
+        return {
+          action: `Generating ${duration}`,
+          target: targetPath,
+          suffix: shortPrompt ? `("${shortPrompt}")...` : "...",
+        }
+      }
+      if (status === "done") {
+        return {
+          action: `Generated ${duration}`,
+          target: targetPath,
+          suffix: shortPrompt ? `("${shortPrompt}")` : undefined,
+        }
+      }
+      return {
+        action: "Failed to generate music",
+        target: targetPath,
       }
     }
 

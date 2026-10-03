@@ -13,7 +13,6 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
       "@engine/*": ["./engine/*"]
     }

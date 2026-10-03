@@ -1,5 +1,5 @@
 import * as THREE from "three"
-import type { ColorLike } from "./types.ts"
+import type { ColorLike, MaterialKit, MaterialKitOptions } from "./types.ts"
 
 /**
  * Colour, surfaces, and textures drawn in code.
@@ -473,4 +473,607 @@ export function skyGradient(
   ])
   scene.background = texture
   return texture
+}
+
+// ============================================================================
+// AAA PBR Material Recipes (from shader-cookbook.md)
+// ============================================================================
+
+/** Painted metal (car body, ship hull panel) — clearcoat dielectric over reflective body */
+export function paintedMetal(options: THREE.MeshPhysicalMaterialParameters = {}): THREE.MeshPhysicalMaterial {
+  const { color = 0x1f6feb, ...rest } = options
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(color),
+    metalness: 0.1,
+    roughness: 0.45,
+    clearcoat: 0.9,
+    clearcoatRoughness: 0.15,
+    envMapIntensity: 1.0,
+    ...rest,
+  })
+}
+
+/** Bare brushed metal (steel frame, mechanical joints, weapon barrels) */
+export function brushedMetal(options: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial {
+  const { color = 0xaeb4bd, ...rest } = options
+  return new THREE.MeshStandardMaterial({
+    color: new THREE.Color(color),
+    metalness: 1.0,
+    roughness: 0.38,
+    envMapIntensity: 1.1,
+    ...rest,
+  })
+}
+
+/** Rubber & tires — near-black, zero reflection, kills env reflections */
+export function rubber(options: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial {
+  const { color = 0x0a0a0b, ...rest } = options
+  return new THREE.MeshStandardMaterial({
+    color: new THREE.Color(color),
+    metalness: 0.0,
+    roughness: 0.94,
+    envMapIntensity: 0.3,
+    ...rest,
+  })
+}
+
+/** Matte plastic (housings, crates, bumpers) */
+export function mattePlastic(options: THREE.MeshStandardMaterialParameters = {}): THREE.MeshStandardMaterial {
+  const { color = 0xd23b3b, ...rest } = options
+  return new THREE.MeshStandardMaterial({
+    color: new THREE.Color(color),
+    metalness: 0.0,
+    roughness: 0.62,
+    envMapIntensity: 0.6,
+    ...rest,
+  })
+}
+
+/** Glossy ceramic / polished armor plate */
+export function glossyCeramic(options: THREE.MeshPhysicalMaterialParameters = {}): THREE.MeshPhysicalMaterial {
+  const { color = 0xf5f5f5, ...rest } = options
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(color),
+    metalness: 0.0,
+    roughness: 0.12,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.05,
+    envMapIntensity: 1.0,
+    ...rest,
+  })
+}
+
+/** Emissive signal (beacon, pickup core, visor) — dark base feeds intense bloom */
+export function emissiveSignal(
+  glowColor: THREE.ColorRepresentation = 0x18e0ff,
+  intensity: number = 2.5,
+  options: THREE.MeshStandardMaterialParameters = {}
+): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color: new THREE.Color(0x0c0c0c),
+    emissive: new THREE.Color(glowColor),
+    emissiveIntensity: intensity,
+    metalness: 0.0,
+    roughness: 0.4,
+    ...options,
+  })
+}
+
+/** Cloth & fabric with soft edge sheen */
+export function cloth(options: THREE.MeshPhysicalMaterialParameters = {}): THREE.MeshPhysicalMaterial {
+  const { color = 0x3a4a6b, ...rest } = options
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(color),
+    metalness: 0.0,
+    roughness: 0.9,
+    sheen: 1.0,
+    sheenRoughness: 0.5,
+    sheenColor: new THREE.Color(0x8899bb),
+    envMapIntensity: 0.5,
+    ...rest,
+  })
+}
+
+/** Cheap fake glass — no transmission buffer, fast transparent draw with clearcoat */
+export function cheapGlass(options: THREE.MeshPhysicalMaterialParameters = {}): THREE.MeshPhysicalMaterial {
+  const { color = 0x88ccff, opacity = 0.28, ...rest } = options
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(color),
+    metalness: 0.0,
+    roughness: 0.08,
+    transparent: true,
+    opacity,
+    clearcoat: 1.0,
+    clearcoatRoughness: 0.05,
+    envMapIntensity: 1.5,
+    depthWrite: false,
+    ...rest,
+  })
+}
+
+/** Real refractive glass — uses transmission buffer for hero cockpits and vials */
+export function refractiveGlass(options: THREE.MeshPhysicalMaterialParameters = {}): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({
+    metalness: 0.0,
+    roughness: 0.05,
+    transmission: 1.0,
+    thickness: 0.5,
+    ior: 1.5,
+    envMapIntensity: 1.0,
+    ...options,
+  })
+}
+
+// ============================================================================
+// Procedural Textures & Trim Sheets (from technical-art.md)
+// ============================================================================
+
+function createConfiguredCanvasTexture(canvas: HTMLCanvasElement, repeatX = 1, repeatY = 1): THREE.CanvasTexture {
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.wrapS = THREE.RepeatWrapping
+  texture.wrapT = THREE.RepeatWrapping
+  texture.repeat.set(repeatX, repeatY)
+  texture.anisotropy = 8
+  texture.needsUpdate = true
+  return texture
+}
+
+export interface TrimSheetOptions {
+  size?: number
+  baseColor?: string
+  trimColor?: string
+  accentColor?: string
+  repeat?: [number, number]
+}
+
+/** Generates an authored PBR trim sheet with panel bands, bolt rivets, and bevel seams */
+export function createTrimSheetTexture(options: TrimSheetOptions = {}): THREE.CanvasTexture {
+  const {
+    size = 512,
+    baseColor = "#1e293b",
+    trimColor = "#334155",
+    accentColor = "#0284c7",
+    repeat = [1, 1],
+  } = options
+
+  const canvas = document.createElement("canvas")
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext("2d")
+  if (ctx) {
+    ctx.fillStyle = baseColor
+    ctx.fillRect(0, 0, size, size)
+
+    // Horizontal trim bands
+    const bandHeight = size / 8
+    for (let i = 0; i < 8; i++) {
+      ctx.fillStyle = i % 2 === 0 ? trimColor : baseColor
+      ctx.fillRect(0, i * bandHeight, size, bandHeight)
+
+      // Bevel seam highlight and shadow
+      ctx.fillStyle = "rgba(255, 255, 255, 0.15)"
+      ctx.fillRect(0, i * bandHeight, size, 2)
+      ctx.fillStyle = "rgba(0, 0, 0, 0.45)"
+      ctx.fillRect(0, (i + 1) * bandHeight - 2, size, 2)
+
+      // Rivets / bolts
+      ctx.fillStyle = "rgba(255, 255, 255, 0.25)"
+      for (let x = 16; x < size; x += 32) {
+        ctx.beginPath()
+        ctx.arc(x, i * bandHeight + bandHeight / 2, 2.5, 0, Math.PI * 2)
+        ctx.fill()
+      }
+    }
+
+    // Accent warning stripe in center
+    ctx.fillStyle = accentColor
+    ctx.fillRect(0, size * 0.48, size, size * 0.04)
+  }
+  return createConfiguredCanvasTexture(canvas, repeat[0], repeat[1])
+}
+
+export interface HazardStripesOptions {
+  size?: number
+  stripeWidth?: number
+  colorA?: string
+  colorB?: string
+  repeat?: [number, number]
+}
+
+/** Generates diagonal caution / hazard stripes (e.g. industrial ramps, danger zones) */
+export function createHazardStripesTexture(options: HazardStripesOptions = {}): THREE.CanvasTexture {
+  const {
+    size = 256,
+    stripeWidth = 24,
+    colorA = "#eab308",
+    colorB = "#18181b",
+    repeat = [1, 1],
+  } = options
+
+  const canvas = document.createElement("canvas")
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext("2d")
+  if (ctx) {
+    ctx.fillStyle = colorA
+    ctx.fillRect(0, 0, size, size)
+
+    ctx.fillStyle = colorB
+    ctx.beginPath()
+    const step = stripeWidth * 2
+    for (let x = -size; x < size * 2; x += step) {
+      ctx.moveTo(x, 0)
+      ctx.lineTo(x + stripeWidth, 0)
+      ctx.lineTo(x + stripeWidth - size, size)
+      ctx.lineTo(x - size, size)
+      ctx.closePath()
+    }
+    ctx.fill()
+  }
+  return createConfiguredCanvasTexture(canvas, repeat[0], repeat[1])
+}
+
+export interface PanelLinesOptions {
+  size?: number
+  gridCount?: number
+  baseColor?: string
+  lineColor?: string
+  repeat?: [number, number]
+}
+
+/** Generates clean sci-fi / structural hull panel lines with recessed seams */
+export function createPanelLinesTexture(options: PanelLinesOptions = {}): THREE.CanvasTexture {
+  const {
+    size = 512,
+    gridCount = 8,
+    baseColor = "#27272a",
+    lineColor = "#09090b",
+    repeat = [1, 1],
+  } = options
+
+  const canvas = document.createElement("canvas")
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext("2d")
+  if (ctx) {
+    ctx.fillStyle = baseColor
+    ctx.fillRect(0, 0, size, size)
+
+    const step = size / gridCount
+    for (let i = 0; i <= gridCount; i++) {
+      const pos = i * step
+      // Shadow seam
+      ctx.strokeStyle = lineColor
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.moveTo(pos, 0)
+      ctx.lineTo(pos, size)
+      ctx.moveTo(0, pos)
+      ctx.lineTo(size, pos)
+      ctx.stroke()
+
+      // Light bevel edge
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.12)"
+      ctx.lineWidth = 1
+      ctx.beginPath()
+      ctx.moveTo(pos + 2, 0)
+      ctx.lineTo(pos + 2, size)
+      ctx.moveTo(0, pos + 2)
+      ctx.lineTo(size, pos + 2)
+      ctx.stroke()
+    }
+  }
+  return createConfiguredCanvasTexture(canvas, repeat[0], repeat[1])
+}
+
+export interface StoneTilesOptions {
+  size?: number
+  cols?: number
+  rows?: number
+  baseColor?: string
+  mortarColor?: string
+  repeat?: [number, number]
+}
+
+/** Generates medieval stone tiles / dungeon cobblestone courses */
+export function createStoneTilesTexture(options: StoneTilesOptions = {}): THREE.CanvasTexture {
+  const {
+    size = 512,
+    cols = 6,
+    rows = 10,
+    baseColor = "#44403c",
+    mortarColor = "#1c1917",
+    repeat = [1, 1],
+  } = options
+
+  const canvas = document.createElement("canvas")
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext("2d")
+  if (ctx) {
+    ctx.fillStyle = mortarColor
+    ctx.fillRect(0, 0, size, size)
+
+    const tileW = size / cols
+    const tileH = size / rows
+
+    for (let r = 0; r < rows; r++) {
+      const offset = (r % 2) * (tileW / 2)
+      for (let c = -1; c <= cols; c++) {
+        const x = c * tileW + offset + 2
+        const y = r * tileH + 2
+        const w = tileW - 4
+        const h = tileH - 4
+
+        // Stone variation
+        const lightnessMod = ((c + r) % 3) * 10
+        ctx.fillStyle = shade(baseColor, (lightnessMod - 10) / 100).getStyle()
+        ctx.fillRect(x, y, w, h)
+
+        // Stone bevel highlight
+        ctx.fillStyle = "rgba(255, 255, 255, 0.14)"
+        ctx.fillRect(x, y, w, 2)
+        ctx.fillRect(x, y, 2, h)
+
+        // Stone bottom shadow
+        ctx.fillStyle = "rgba(0, 0, 0, 0.35)"
+        ctx.fillRect(x, y + h - 2, w, 2)
+        ctx.fillRect(x + w - 2, y, 2, h)
+      }
+    }
+  }
+  return createConfiguredCanvasTexture(canvas, repeat[0], repeat[1])
+}
+
+export interface NoiseGrainOptions {
+  size?: number
+  baseColor?: string
+  contrast?: number
+  repeat?: [number, number]
+}
+
+/** Generates procedural surface roughness noise */
+export function createNoiseGrainTexture(options: NoiseGrainOptions = {}): THREE.CanvasTexture {
+  const { size = 256, baseColor = "#808080", contrast = 0.15, repeat = [1, 1] } = options
+  const canvas = document.createElement("canvas")
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext("2d")
+  if (ctx) {
+    ctx.fillStyle = baseColor
+    ctx.fillRect(0, 0, size, size)
+    const imgData = ctx.getImageData(0, 0, size, size)
+    const data = imgData.data
+    for (let i = 0; i < data.length; i += 4) {
+      const noise = (Math.random() - 0.5) * 255 * contrast
+      data[i] = Math.min(255, Math.max(0, data[i] + noise))
+      data[i + 1] = Math.min(255, Math.max(0, data[i + 1] + noise))
+      data[i + 2] = Math.min(255, Math.max(0, data[i + 2] + noise))
+    }
+    ctx.putImageData(imgData, 0, 0)
+  }
+  return createConfiguredCanvasTexture(canvas, repeat[0], repeat[1])
+}
+
+export const proceduralTextures = {
+  trimSheet: createTrimSheetTexture,
+  hazardStripes: createHazardStripesTexture,
+  panelLines: createPanelLinesTexture,
+  stoneTiles: createStoneTilesTexture,
+  noiseGrain: createNoiseGrainTexture,
+}
+
+// ============================================================================
+// onBeforeCompile Shaders & Sky (from shader-cookbook.md)
+// ============================================================================
+
+export interface FresnelRimOptions {
+  color?: THREE.ColorRepresentation
+  power?: number
+  strength?: number
+}
+
+/** Injects Fresnel rim glow on shields, cloak states, and hero silhouette edges */
+export function applyFresnelRim(
+  material: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial,
+  options: FresnelRimOptions = {}
+): void {
+  const { color = 0x33ccff, power = 3.0, strength = 1.5 } = options
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uRimColor = { value: new THREE.Color(color) }
+    shader.uniforms.uRimPower = { value: power }
+    shader.uniforms.uRimStrength = { value: strength }
+    shader.fragmentShader =
+      "uniform vec3 uRimColor;\nuniform float uRimPower;\nuniform float uRimStrength;\n" +
+      shader.fragmentShader.replace(
+        "#include <emissivemap_fragment>",
+        `#include <emissivemap_fragment>
+         float fres = pow(1.0 - saturate(dot(normalize(vNormal), normalize(vViewPosition))), uRimPower);
+         totalEmissiveRadiance += uRimColor * fres * uRimStrength;`
+      )
+  }
+  material.customProgramCacheKey = () => "fresnel-rim"
+}
+
+export interface ScrollingEmissiveOptions {
+  color?: THREE.ColorRepresentation
+  speed?: number
+  frequency?: number
+}
+
+/** Injects animated scrolling emissive bands (energy conduits, boost lanes) */
+export function applyScrollingEmissive(
+  material: THREE.MeshStandardMaterial | THREE.MeshPhysicalMaterial,
+  options: ScrollingEmissiveOptions = {}
+): { update: (dt: number) => void } {
+  const { color = 0x18e0ff, speed = 0.5, frequency = 6.0 } = options
+  let time = 0
+
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = { value: 0 }
+    shader.uniforms.uPanelColor = { value: new THREE.Color(color) }
+    material.userData.shader = shader
+    shader.vertexShader =
+      "varying vec2 vCookUv;\n" +
+      shader.vertexShader.replace(
+        "#include <begin_vertex>",
+        "#include <begin_vertex>\n vCookUv = uv;"
+      )
+    shader.fragmentShader =
+      "uniform float uTime;\nuniform vec3 uPanelColor;\nvarying vec2 vCookUv;\n" +
+      shader.fragmentShader.replace(
+        "#include <emissivemap_fragment>",
+        `#include <emissivemap_fragment>
+         float scroll = fract(vCookUv.y * ${frequency.toFixed(1)} - uTime * ${speed.toFixed(2)});
+         float band = smoothstep(0.46, 0.5, scroll) * smoothstep(0.54, 0.5, scroll);
+         totalEmissiveRadiance += uPanelColor * band * 2.0;`
+      )
+  }
+  material.customProgramCacheKey = () => "scroll-emissive"
+
+  return {
+    update(dt: number) {
+      time += dt
+      if (material.userData.shader) {
+        material.userData.shader.uniforms.uTime.value = time
+      }
+    },
+  }
+}
+
+/** Injects wind sway on foliage, flags, and antennae (tips move most, base stays planted) */
+export function applyWindSway(
+  material: THREE.Material,
+  speed = 1.5,
+  amplitude = 0.08
+): { update: (dt: number) => void } {
+  let time = 0
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uTime = { value: 0 }
+    material.userData.shader = shader
+    shader.vertexShader =
+      "uniform float uTime;\n" +
+      shader.vertexShader.replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+         #ifdef USE_INSTANCING
+           float phase = instanceMatrix[3].x + instanceMatrix[3].z;
+         #else
+           float phase = 0.0;
+         #endif
+         float h = max(position.y, 0.0);
+         transformed.x += sin(uTime * ${speed.toFixed(2)} + phase) * ${amplitude.toFixed(3)} * h;
+         transformed.z += cos(uTime * ${(speed * 0.73).toFixed(2)} + phase) * ${(amplitude * 0.62).toFixed(3)} * h;`
+      )
+  }
+  material.customProgramCacheKey = () => "wind-sway"
+
+  return {
+    update(dt: number) {
+      time += dt
+      if (material.userData.shader) {
+        material.userData.shader.uniforms.uTime.value = time
+      }
+    },
+  }
+}
+
+export interface SkyDomeOptions {
+  topColor?: THREE.ColorRepresentation
+  horizonColor?: THREE.ColorRepresentation
+  sunColor?: THREE.ColorRepresentation
+  sunDirection?: THREE.Vector3
+  radius?: number
+}
+
+/** Gradient sky dome with sun disc and atmospheric halo (cheaper and crisper than cubemaps) */
+export function createSkyDome(scene: THREE.Scene, options: SkyDomeOptions = {}): THREE.Mesh {
+  const {
+    topColor = 0x3a6fb0,
+    horizonColor = 0xcfe4f5,
+    sunColor = 0xfff2cc,
+    sunDirection = new THREE.Vector3(0.4, 0.28, 0.6).normalize(),
+    radius = 500,
+  } = options
+
+  const uniforms = {
+    uTop: { value: new THREE.Color(topColor) },
+    uHorizon: { value: new THREE.Color(horizonColor) },
+    uSunColor: { value: new THREE.Color(sunColor) },
+    uSunDir: { value: sunDirection },
+  }
+
+  const sky = new THREE.Mesh(
+    new THREE.SphereGeometry(radius, 32, 16),
+    new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      uniforms,
+      vertexShader: `varying vec3 vDir;
+        void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `varying vec3 vDir;
+        uniform vec3 uTop, uHorizon, uSunColor, uSunDir;
+        void main(){
+          float h = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
+          vec3 col = mix(uHorizon, uTop, pow(h, 0.6));
+          float d = clamp(dot(normalize(vDir), normalize(uSunDir)), 0.0, 1.0);
+          col += uSunColor * (pow(d, 800.0) + pow(d, 8.0) * 0.25);
+          gl_FragColor = vec4(col, 1.0);
+        }`,
+    })
+  )
+  sky.frustumCulled = false
+  scene.add(sky)
+  return sky
+}
+
+/**
+ * Factory creating a complete cohesive MaterialKit with named shared roles
+ * (bodyPrimary, bodySecondary, trim, hazard, reward, shieldBoost, glass,
+ * emissiveSignal, groundContact, decalDark, decalLight) as specified by technical art standards.
+ */
+export function createMaterialKit(options: MaterialKitOptions = {}): MaterialKit {
+  const hazardColor = options.hazard ?? palette.orange
+  const rewardColor = options.reward ?? palette.yellow
+  const shieldColor = options.shieldBoost ?? palette.cyan
+
+  return {
+    bodyPrimary: standard({
+      color: options.primary ?? palette.slate,
+      roughness: 0.45,
+      metalness: 0.15,
+    }),
+    bodySecondary: standard({
+      color: options.secondary ?? palette.mist,
+      roughness: 0.55,
+      metalness: 0.05,
+    }),
+    trim: brushedMetal({ color: options.trim ?? palette.ember }),
+    hazard: standard({
+      color: hazardColor,
+      roughness: 0.4,
+      metalness: 0.1,
+      emissive: new THREE.Color(hazardColor).multiplyScalar(0.2),
+    }),
+    reward: standard({
+      color: rewardColor,
+      roughness: 0.2,
+      metalness: 0.8,
+      emissive: new THREE.Color(rewardColor).multiplyScalar(0.35),
+    }),
+    shieldBoost: standard({
+      color: shieldColor,
+      roughness: 0.1,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.85,
+      emissive: new THREE.Color(shieldColor).multiplyScalar(0.5),
+    }),
+    glass: refractiveGlass({ color: options.glass ?? "#d8f0ff", opacity: 0.4 }),
+    emissiveSignal: emissiveSignal(options.emissive ?? palette.teal, 2.0),
+    groundContact: matte(options.ground ?? "#151713", { roughness: 0.98, metalness: 0 }),
+    decalDark: flat("#000000", { transparent: true, opacity: 0.75, depthWrite: false }),
+    decalLight: flat("#ffffff", { transparent: true, opacity: 0.85, depthWrite: false }),
+  }
 }

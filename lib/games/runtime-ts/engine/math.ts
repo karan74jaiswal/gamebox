@@ -196,6 +196,14 @@ export function createRandom(seed: number = 1): RandomSource {
   }
 }
 
+/**
+ * Deterministic seeded RNG function returning numbers in [0, 1).
+ * Matches the scaffold utility used by test hooks and bot playtests.
+ */
+export function createSeededRandom(seed: number = 1): () => number {
+  return createRandom(seed).next
+}
+
 // --- Easing -----------------------------------------------------------------
 
 export type EaseFunction = (t: number) => number
@@ -237,3 +245,15 @@ export const ease: Record<string, EaseFunction> = {
     return n * (current -= 2.625 / d) * current + 0.984375
   },
 }
+
+export const easeLinear: EaseFunction = ease.linear
+export const easeInQuad: EaseFunction = ease.inQuad
+export const easeOutQuad: EaseFunction = ease.outQuad
+export const easeInOutQuad: EaseFunction = ease.inOutQuad
+export const easeInCubic: EaseFunction = ease.inCubic
+export const easeOutCubic: EaseFunction = ease.outCubic
+export const easeInOutCubic: EaseFunction = ease.inOutCubic
+export const easeOutBack: EaseFunction = ease.outBack
+export const easeInBack: EaseFunction = ease.inBack
+export const easeOutElastic: EaseFunction = ease.outElastic
+export const easeOutBounce: EaseFunction = ease.outBounce

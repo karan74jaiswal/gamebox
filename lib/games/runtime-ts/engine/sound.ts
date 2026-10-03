@@ -1,4 +1,6 @@
+import type * as THREE from "three"
 import type {
+  AudioGroup,
   AudioOptions,
   AudioSystem,
   MusicConfig,
@@ -7,6 +9,7 @@ import type {
   SoundOutput,
   SoundPlayConfig,
   ToneConfig,
+  Vector3Like,
 } from "./types.ts"
 
 declare global {
@@ -41,9 +44,23 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
   let unlocked = false
   let currentVolume = volume
   let pitchShift = 1
+  let activeDestination: AudioNode | null = null
+  let activeGainMultiplier = 1
   const clips = new Map<string, AudioBuffer>()
   let activeBgmSource: AudioBufferSourceNode | null = null
   let activeBgmGain: GainNode | null = null
+
+  const groupVolumes = new Map<AudioGroup, number>([
+    ["master", volume],
+    ["sfx", 1],
+    ["ui", 0.8],
+    ["ambience", 0.6],
+    ["voice", 1],
+    ["music", 0.5],
+  ])
+  const groupMuted = new Map<AudioGroup, boolean>()
+  const groups = new Map<AudioGroup, GainNode>()
+  const lastPlayed = new Map<string, number>()
 
   function ensure(): AudioContext | null {
     if (context) return context
@@ -54,9 +71,16 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
     master = context.createGain()
     master.gain.value = currentVolume
     master.connect(context.destination)
-    musicGain = context.createGain()
-    musicGain.gain.value = 0.5
-    musicGain.connect(master)
+    groups.set("master", master)
+
+    for (const grp of ["sfx", "ui", "ambience", "voice", "music"] as const) {
+      const g = context.createGain()
+      const vol = groupMuted.get(grp) ? 0 : (groupVolumes.get(grp) ?? 1)
+      g.gain.value = vol
+      g.connect(master)
+      groups.set(grp, g)
+    }
+    musicGain = groups.get("music")!
     return context
   }
 
@@ -92,9 +116,10 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
       slide = 0,
       attack = 0.005,
       delay = 0,
-      destination = master,
+      destination = activeDestination ?? (config.group ? groups.get(config.group) : null) ?? groups.get("sfx") ?? master,
     } = config
 
+    const finalGain = gain * activeGainMultiplier
     const start = now() + delay
     const pitched = frequency * pitchShift
     const oscillator = ctx.createOscillator()
@@ -110,7 +135,7 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
     }
 
     envelope.gain.setValueAtTime(0.0001, start)
-    envelope.gain.exponentialRampToValueAtTime(gain, start + attack)
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, finalGain), start + attack)
     envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
 
     oscillator.connect(envelope)
@@ -132,8 +157,10 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
       sweep = 0,
       Q = 1,
       delay = 0,
+      destination = activeDestination ?? (config.group ? groups.get(config.group) : null) ?? groups.get("sfx") ?? master,
     } = config
 
+    const finalGain = gain * activeGainMultiplier
     const start = now() + delay
     const frames = Math.max(1, Math.floor(ctx.sampleRate * duration))
     const buffer = ctx.createBuffer(1, frames, ctx.sampleRate)
@@ -155,12 +182,12 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
     }
 
     const envelope = ctx.createGain()
-    envelope.gain.setValueAtTime(gain, start)
+    envelope.gain.setValueAtTime(Math.max(0.0001, finalGain), start)
     envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
 
     source.connect(filter)
     filter.connect(envelope)
-    envelope.connect(master)
+    envelope.connect(destination)
     source.start(start)
     return source
   }
@@ -315,6 +342,52 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
         delay: 0.2,
       })
     },
+    hover: () =>
+      tone({ frequency: 800, type: "sine", duration: 0.03, gain: 0.08 }),
+    confirm: () => {
+      tone({ frequency: 587, type: "sine", duration: 0.06, gain: 0.16 })
+      tone({ frequency: 880, type: "triangle", duration: 0.09, gain: 0.18, delay: 0.05 })
+    },
+    cancel: () =>
+      tone({ frequency: 494, type: "sawtooth", duration: 0.08, gain: 0.14, slide: -150 }),
+    pause: () =>
+      tone({ frequency: 392, type: "square", duration: 0.05, gain: 0.12 }),
+    dash: () =>
+      noise({ duration: 0.18, frequency: 800, gain: 0.22, sweep: 1400, type: "bandpass", Q: 3 }),
+    boost: () => {
+      tone({ frequency: 220, type: "sawtooth", duration: 0.28, gain: 0.24, slide: 440 })
+      noise({ duration: 0.25, frequency: 1200, gain: 0.15, sweep: 800 })
+    },
+    drift: () =>
+      noise({ duration: 0.22, frequency: 600, gain: 0.18, type: "bandpass", Q: 4 }),
+    shield: () => {
+      tone({ frequency: 784, type: "sine", duration: 0.25, gain: 0.24 })
+      tone({ frequency: 1174, type: "triangle", duration: 0.2, gain: 0.2, delay: 0.04 })
+    },
+    score: () => {
+      tone({ frequency: 1046, type: "square", duration: 0.08, gain: 0.18 })
+      tone({ frequency: 1318, type: "triangle", duration: 0.12, gain: 0.2, delay: 0.06 })
+    },
+    checkpoint: () => {
+      tone({ frequency: 523, duration: 0.14, gain: 0.2 })
+      tone({ frequency: 659, duration: 0.14, gain: 0.2, delay: 0.08 })
+      tone({ frequency: 784, duration: 0.24, gain: 0.24, delay: 0.16 })
+    },
+    warning: () => {
+      tone({ frequency: 880, type: "sawtooth", duration: 0.12, gain: 0.22, slide: -180 })
+      tone({
+        frequency: 880,
+        type: "sawtooth",
+        duration: 0.12,
+        gain: 0.22,
+        slide: -180,
+        delay: 0.14,
+      })
+    },
+    impact: () => {
+      tone({ frequency: 160, type: "sine", duration: 0.2, gain: 0.35, slide: -90 })
+      noise({ duration: 0.08, frequency: 2800, gain: 0.25, sweep: -2000 })
+    },
   }
 
   // --- Music ----------------------------------------------------------------
@@ -377,6 +450,7 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
                 ? config.gain
                 : 1,
           pitchVariance: config.vary,
+          group: config.group,
         })
       }
       const sound = sounds[name]
@@ -384,10 +458,22 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
       unlock()
       const { pitch = 1, vary = 0 } = config
       pitchShift = pitch * (1 + (Math.random() - 0.5) * 2 * vary)
+      const uiSounds = new Set(["click", "blip", "select", "hover", "confirm", "cancel", "pause"])
+      const targetGroup = config.group ?? (uiSounds.has(name) ? "ui" : "sfx")
+      activeDestination =
+        (config.destination as AudioNode) ?? groups.get(targetGroup) ?? master
+      activeGainMultiplier =
+        typeof config.volume === "number"
+          ? config.volume
+          : typeof config.gain === "number"
+            ? config.gain
+            : 1
       try {
         return sound(config)
       } finally {
         pitchShift = 1
+        activeDestination = null
+        activeGainMultiplier = 1
       }
     },
 
@@ -445,14 +531,14 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
 
     playClip(
       name: string,
-      options: { volume?: number; pitchVariance?: number; loop?: boolean } = {}
+      options: { volume?: number; pitchVariance?: number; loop?: boolean; group?: AudioGroup } = {}
     ): AudioBufferSourceNode | undefined {
       const ctx = ensure()
       if (!ctx || audio.muted || !master) return undefined
       const buf = clips.get(name)
       if (!buf) return undefined
       unlock()
-      const { volume = 1, pitchVariance = 0, loop = false } = options
+      const { volume = 1, pitchVariance = 0, loop = false, group = "sfx" } = options
       const source = ctx.createBufferSource()
       const gainNode = ctx.createGain()
       source.buffer = buf
@@ -461,7 +547,8 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
         source.playbackRate.value = 1 + (Math.random() - 0.5) * pitchVariance * 2
       }
       gainNode.gain.value = volume
-      source.connect(gainNode).connect(master)
+      const targetDest = groups.get(group) ?? master
+      source.connect(gainNode).connect(targetDest)
       source.start()
       return source
     },
@@ -487,7 +574,8 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
           const startTime = ctx.currentTime
           gainNode.gain.setValueAtTime(0.001, startTime)
           gainNode.gain.linearRampToValueAtTime(volume, startTime + fadeIn)
-          source.connect(gainNode).connect(master)
+          const dest = groups.get("music") ?? master
+          source.connect(gainNode).connect(dest)
           source.start()
           activeBgmSource = source
           activeBgmGain = gainNode
@@ -510,6 +598,128 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
       activeBgmGain = null
     },
 
+    getGroupVolume(group: AudioGroup): number {
+      return groupVolumes.get(group) ?? 1
+    },
+    setGroupVolume(group: AudioGroup, volume: number): void {
+      const clamped = Math.max(0, Math.min(1, volume))
+      groupVolumes.set(group, clamped)
+      ensure()
+      const node = groups.get(group)
+      if (node && !groupMuted.get(group) && !audio.muted) {
+        node.gain.value = clamped
+      }
+    },
+    muteGroup(group: AudioGroup, muted = true): void {
+      groupMuted.set(group, muted)
+      ensure()
+      const node = groups.get(group)
+      if (node) {
+        node.gain.value = muted ? 0 : (groupVolumes.get(group) ?? 1)
+      }
+    },
+    isGroupMuted(group: AudioGroup): boolean {
+      return groupMuted.get(group) ?? false
+    },
+
+    duck(factor = 0.5, durationSec = 0.3): void {
+      const ctx = ensure()
+      if (!ctx) return
+      const cur = ctx.currentTime
+      for (const name of ["music", "ambience"] as const) {
+        const node = groups.get(name)
+        if (!node) continue
+        const base = groupMuted.get(name) ? 0 : (groupVolumes.get(name) ?? 1)
+        node.gain.cancelScheduledValues(cur)
+        node.gain.setValueAtTime(node.gain.value, cur)
+        node.gain.linearRampToValueAtTime(base * factor, cur + 0.05)
+        node.gain.setValueAtTime(base * factor, cur + Math.max(0.05, durationSec - 0.05))
+        node.gain.linearRampToValueAtTime(base, cur + durationSec)
+      }
+    },
+
+    playWithCooldown(
+      name: string,
+      cooldownMs = 100,
+      config: SoundPlayConfig = {}
+    ): SoundOutput {
+      const t = typeof performance !== "undefined" ? performance.now() : Date.now()
+      const last = lastPlayed.get(name) ?? -Infinity
+      if (t - last < cooldownMs) return
+      lastPlayed.set(name, t)
+      return audio.play(name, config)
+    },
+
+    playAt(
+      name: string,
+      position: Vector3Like,
+      listener?: Vector3Like | THREE.Camera,
+      config: SoundPlayConfig & { maxDistance?: number } = {}
+    ): SoundOutput {
+      const { maxDistance = 30, ...restConfig } = config
+      const ctx = ensure()
+      if (!ctx || audio.muted || !master) return
+
+      const sx = Array.isArray(position) ? position[0] : "x" in position ? position.x : 0
+      const sy = Array.isArray(position) ? position[1] : "y" in position ? position.y : 0
+      const sz = Array.isArray(position) ? position[2] : "z" in position ? position.z : 0
+
+      let lx = 0
+      let ly = 0
+      let lz = 0
+      let rightX = 1
+      let rightZ = 0
+      if (listener) {
+        if ("isCamera" in (listener as object)) {
+          const cam = listener as THREE.Camera
+          lx = cam.position.x
+          ly = cam.position.y
+          lz = cam.position.z
+          const el = cam.matrixWorld.elements
+          rightX = el[0]
+          rightZ = el[2]
+        } else {
+          lx = Array.isArray(listener) ? listener[0] : "x" in listener ? listener.x : 0
+          ly = Array.isArray(listener) ? listener[1] : "y" in listener ? listener.y : 0
+          lz = Array.isArray(listener) ? listener[2] : "z" in listener ? listener.z : 0
+        }
+      }
+
+      const dx = sx - lx
+      const dy = sy - ly
+      const dz = sz - lz
+      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz)
+      if (dist > maxDistance) return
+
+      const dist01 = Math.max(0, 1 - dist / maxDistance)
+      const volAtten = dist01 * dist01
+
+      const normDist = dist > 0.001 ? dist : 1
+      const pan = Math.max(-1, Math.min(1, (dx * rightX + dz * rightZ) / normDist))
+
+      const spatialGain = ctx.createGain()
+      spatialGain.gain.value = volAtten
+
+      let outputNode: AudioNode = spatialGain
+      const createPan = (ctx as unknown as { createStereoPanner?: () => StereoPannerNode })
+        .createStereoPanner
+      if (typeof createPan === "function") {
+        const panner = createPan.call(ctx)
+        panner.pan.value = pan
+        spatialGain.connect(panner)
+        outputNode = panner
+      }
+
+      const uiSounds = new Set(["click", "blip", "select", "hover", "confirm", "cancel", "pause"])
+      const targetGroup = restConfig.group ?? (uiSounds.has(name) ? "ui" : "sfx")
+      outputNode.connect(groups.get(targetGroup) ?? master)
+
+      return audio.play(name, {
+        ...restConfig,
+        destination: spatialGain,
+      })
+    },
+
     get ready(): boolean {
       return unlocked
     },
@@ -519,6 +729,7 @@ export function createAudio(options: AudioOptions = {}): AudioSystem {
       stopMusic()
       audio.stopMusic()
       clips.clear()
+      groups.clear()
       context?.close()
       context = null
     },

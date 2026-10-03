@@ -69,13 +69,37 @@ The engine toolkit is available at ./engine/index.ts.
 
 Any other library has to come from a CDN by full url, loaded by the page.
 
-# Assets
+# Procedural Art & Graphics (Confident In-Memory Generation)
 
-Beyond three.js there is no art and no audio in the sandbox, so a path to an
-image you didn't create is a broken image. Build models out of geometry
-(engine/models.ts has a shelf of them), draw textures to a canvas
-(engine/materials.ts), and synthesise sound (engine/sound.ts). Reach for a CDN
-url only when you are certain of it.
+Three.js is an ultra-capable procedural 3D engine. You do not need external model downloads or image hosting — 100% of textures, materials, compound meshes, lighting, and audio are generated procedurally in memory with zero network latency, zero broken URLs, and instant loading:
+
+1. Procedural PBR Textures (CanvasTexture):
+   - Draw dynamic surface patterns to an in-memory HTML5 <canvas> (stone tiles, cobblestone, wood grain, sci-fi hull panels, runic glyphs, neon grids, noise/grain for roughness).
+   - Wrap with \`new THREE.CanvasTexture(canvas)\`. Set \`wrapS = wrapT = THREE.RepeatWrapping\` and \`texture.repeat.set(rx, ry)\`.
+   - Always set \`texture.anisotropy = 8\` so receding floors stay crisp rather than blurring to mush.
+   - Use canvas textures for \`map\`, \`roughnessMap\`, \`bumpMap\`, and \`emissiveMap\`. Engine helpers like \`materials.checkerTexture\`, \`materials.gridTexture\`, and \`materials.noiseTexture\` are ready to use.
+
+2. Architectural & Compound Geometry:
+   - Never place solitary, raw unstyled boxes. Assemble multi-part compound structures:
+     - Dungeons & Ruins: Beveled wall segments (\`RoundedBoxGeometry\`), stone archways (\`ExtrudeGeometry\` or \`TorusGeometry\`), altar pedestals with stepped moldings, and wall sconces.
+     - Characters & Props: Multi-segment bodies, weapons with hilts and glowing blades, floating runestones, wizard staves.
+     - Vehicles & Mechs: Multi-part chassis, wheels, cockpits, thruster cones.
+   - Group child meshes under named objects in a \`THREE.Group\` (\`root.add(cockpit)\`, \`root.add(wingLeft)\`, \`root.add(thruster)\`).
+   - Use \`THREE.InstancedMesh\` for repeated world elements (pillars, stone slabs, crates, foliage) to keep draw calls minimal.
+
+3. Atmospheric Lighting & Depth:
+   - Combine a key directional light (\`castShadow = true\`, sized shadow camera, \`normalBias = 0.02\`) with a colored fill/ambient light (e.g. warm sunlight with sky bounce). Use engine rigs: \`lights.sunset\`, \`lights.night\`, \`lights.daylight\`, \`lights.moody\`.
+   - Place local \`THREE.PointLight\`s with tight radius and decay for torches, campfires, glowing runes, and thrusters (\`lights.attachLight\`).
+   - Atmospheric fog: Always set \`scene.fog = new THREE.FogExp2(themeColor, density)\` to establish depth, scale, and environmental mystery.
+
+4. Post-Processing & Emissive Bloom:
+   - Enable the engine's built-in UnrealBloomPass via \`createPostFX(scene, camera, renderer, { bloom: true, vignette: true, fxaa: true })\`.
+   - Set \`emissive: new THREE.Color(...)\` and \`emissiveIntensity: 1.5+\` on runes, spells, lasers, and engine exhausts to produce brilliant HDR glows.
+
+5. Synthesized Audio & Visual Juice:
+   - Generate dynamic sound effects using \`engine/sound.ts\` (\`audio.play\`, \`audio.playWithCooldown\`, \`audio.duck\`, \`audio.playAt\`) across dedicated mixer groups (\`master\`, \`sfx\`, \`ui\`, \`ambience\`, \`voice\`, \`music\`).
+   - Deliver punchy tactile feedback via \`engine/game-feel.ts\` (\`ShakeRig\` trauma screenshake, \`HitstopManager\` impact freeze, \`squashAndStretch\` volume-preserving bounce, \`FovPuncher\`, \`flashHit\` emissive flare, and \`rumble\`).
+   - Spawn dynamic particles via \`engine/particles.ts\` (\`createParticles\`, \`createExplosion\`, \`createTrail\`) or \`THREE.Points\` for embers, magical dust motes, and impact sparks.
 
 # Layout
 
@@ -85,7 +109,17 @@ lives flat in the root next to engine/. As the game grows, split it into more
 modules next to it rather than letting one file sprawl — you will be reading
 this code back on every later turn. Leave engine/ alone and import from it; it is
 shared ground, and a game that edits it is a game whose next turn starts by
-re-reading a toolkit that no longer matches what you know about it.`
+re-reading a toolkit that no longer matches what you know about it.
+
+# Asset directories & generation
+
+Game assets are organized under assets/:
+- assets/textures/ — 2D PBR textures, environment maps, and sprites created via generate_texture (e.g. assets/textures/dungeon_stone.png). Load in Three.js with:
+  const texture = new THREE.TextureLoader().load('./assets/textures/dungeon_stone.png')
+- assets/audio/ — Background music tracks and ambient audio loops created via generate_music (e.g. assets/audio/dungeon_theme.mp3). Play with:
+  const bgm = new Audio('./assets/audio/dungeon_theme.mp3')
+  bgm.loop = true
+  document.addEventListener('pointerdown', () => bgm.play(), { once: true })`
 
 export const runtimeInstructions = runtime
 export default runtime

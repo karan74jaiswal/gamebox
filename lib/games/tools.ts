@@ -1,5 +1,6 @@
 import path from "node:path"
-import { tool } from "ai"
+import { generateImage, generateText, tool } from "ai"
+import { google } from "@ai-sdk/google"
 import { z } from "zod"
 import { locals } from "@trigger.dev/sdk"
 import type { Sandbox } from "@daytona/sdk"
@@ -207,6 +208,127 @@ export const replaceTextInputSchema = z.object({
     ),
 })
 
+export const generateTextureInputSchema = z.object({
+  prompt: z
+    .string()
+    .min(3)
+    .max(1000)
+    .describe(
+      "Descriptive prompt for the 2D texture (e.g. 'seamless dark stone dungeon floor tiles, top-down view, realistic PBR')."
+    ),
+  filename: z
+    .string()
+    .min(1)
+    .max(100)
+    .describe(
+      "Output filename without path or extension (e.g. 'dungeon_floor'). The texture will be saved to assets/textures/<filename>.png."
+    ),
+})
+
+export const generateMusicInputSchema = z.object({
+  prompt: z
+    .string()
+    .min(3)
+    .max(1000)
+    .describe(
+      "Descriptive prompt for the music or background track (e.g. 'ambient fantasy dungeon music loop with soft synthesizers, deep sub bass, eerie bell chimes, 90 bpm')."
+    ),
+  filename: z
+    .string()
+    .min(1)
+    .max(100)
+    .describe(
+      "Output filename without path or extension (e.g. 'dungeon_theme'). The audio will be saved to assets/audio/<filename>.mp3."
+    ),
+  duration: z
+    .enum(["loop", "full"])
+    .optional()
+    .default("loop")
+    .describe(
+      "Duration type: 'loop' (fast 30s seamless loop via lyria-3-clip-preview, takes ~7s) or 'full' (multi-minute song via lyria-3.5, takes ~25s)."
+    ),
+})
+
+export const BINARY_IMAGE_EXTS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".ico",
+  ".bmp",
+  ".tiff",
+])
+
+export const BINARY_AUDIO_EXTS = new Set([
+  ".mp3",
+  ".wav",
+  ".ogg",
+  ".aac",
+  ".m4a",
+  ".flac",
+])
+
+export const BINARY_MEDIA_EXTS = new Set([
+  ...BINARY_IMAGE_EXTS,
+  ...BINARY_AUDIO_EXTS,
+  ".mp4",
+  ".webm",
+  ".mov",
+  ".glb",
+  ".gltf",
+  ".bin",
+])
+
+export function isBinaryAsset(filePath: string): boolean {
+  const ext = path.posix.extname(filePath).toLowerCase()
+  return BINARY_MEDIA_EXTS.has(ext)
+}
+
+export function isBinaryImage(filePath: string): boolean {
+  const ext = path.posix.extname(filePath).toLowerCase()
+  return BINARY_IMAGE_EXTS.has(ext)
+}
+
+export function isBinaryAudio(filePath: string): boolean {
+  const ext = path.posix.extname(filePath).toLowerCase()
+  return BINARY_AUDIO_EXTS.has(ext)
+}
+
+export function getImageMimeType(filePath: string): string {
+  const ext = path.posix.extname(filePath).toLowerCase()
+  switch (ext) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg"
+    case ".webp":
+      return "image/webp"
+    case ".gif":
+      return "image/gif"
+    case ".png":
+    default:
+      return "image/png"
+  }
+}
+
+export function getAudioMimeType(filePath: string): string {
+  const ext = path.posix.extname(filePath).toLowerCase()
+  switch (ext) {
+    case ".wav":
+      return "audio/wav"
+    case ".ogg":
+      return "audio/ogg"
+    case ".aac":
+    case ".m4a":
+      return "audio/aac"
+    case ".flac":
+      return "audio/flac"
+    case ".mp3":
+    default:
+      return "audio/mpeg"
+  }
+}
+
 /**
  * Extracts exported TypeScript/JavaScript types, interfaces, classes, functions, and public methods.
  * Generates an ultra-compact summary (<150 tokens) to inspect contracts without loading entire file bodies.
@@ -362,6 +484,7 @@ export const askPlayerOutputSchema = z.object({
 
 export type AskPlayerOutput = z.infer<typeof askPlayerOutputSchema>
 
+
 const PLACEHOLDER_PATTERN =
   /\[(?:persisted to disk|existing code|rest of code|unchanged|TODO|stub)[^\]]*\]|\/\/\s*\.\.\.\s*(?:rest of code|existing code|unchanged)/i
 
@@ -405,6 +528,29 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     execute: async ({ path: filePath, content }) => {
       try {
         const { fullPath, relativePath } = resolveGamePath(filePath)
+
+        if (isBinaryAsset(filePath)) {
+          if (isBinaryImage(filePath)) {
+            return {
+              success: false,
+              path: relativePath,
+              error: `Cannot use write_file for binary image asset ('${relativePath}'). 'write_file' is strictly for text/code files (.ts, .html, .css, .json, .md). To create or generate textures, use 'generate_texture'. To inspect existing images, use 'read_file'.`,
+            }
+          }
+          if (isBinaryAudio(filePath)) {
+            return {
+              success: false,
+              path: relativePath,
+              error: `Cannot use write_file for binary audio asset ('${relativePath}'). 'write_file' is strictly for text/code files (.ts, .html, .css, .json, .md). To create or generate music and audio, use 'generate_music'. To inspect existing audio, use 'read_file'.`,
+            }
+          }
+          return {
+            success: false,
+            path: relativePath,
+            error: `Cannot use write_file for binary asset ('${relativePath}'). 'write_file' is strictly for text/code files (.ts, .html, .css, .json, .md).`,
+          }
+        }
+
         const sandbox = await resolveSandbox()
 
         const lines = content.length === 0 ? 0 : content.split(/\r?\n/).length
@@ -480,6 +626,15 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     }) => {
       try {
         const { fullPath, relativePath } = resolveGamePath(filePath)
+
+        if (isBinaryAsset(filePath)) {
+          return {
+            success: false,
+            path: relativePath,
+            error: `Cannot use update_file on binary asset ('${relativePath}'). Line-based editing is prohibited on binary image and audio files. To inspect the asset, use 'read_file'. To regenerate it, call 'generate_texture' or 'generate_music'. To remove it, use 'delete_file'.`,
+          }
+        }
+
         const sandbox = await resolveSandbox()
 
         let existingContent: string
@@ -659,6 +814,15 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
 
       try {
         const { fullPath, relativePath } = resolveGamePath(filePath)
+
+        if (isBinaryAsset(filePath)) {
+          return {
+            success: false,
+            path: relativePath,
+            error: `replace_text is strictly prohibited on binary asset ('${relativePath}'). Text replacement cannot modify image or audio bytes. Use 'generate_texture' or 'generate_music' to regenerate, or 'read_file' to inspect.`,
+          }
+        }
+
         const sandbox = await resolveSandbox()
 
         let existingContent: string
@@ -762,6 +926,35 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
         const sandbox = await resolveSandbox()
 
         const buffer = await sandbox.fs.downloadFile(fullPath)
+
+        if (isBinaryImage(relativePath)) {
+          const mimeType = getImageMimeType(relativePath)
+          const base64Data = buffer.toString("base64")
+          return {
+            success: true,
+            path: relativePath,
+            mediaType: "image" as const,
+            mimeType,
+            bytes: buffer.byteLength,
+            dataUrl: `data:${mimeType};base64,${base64Data}`,
+            usageCode: `const texture = new THREE.TextureLoader().load('./${relativePath}');\ntexture.wrapS = THREE.RepeatWrapping;\ntexture.wrapT = THREE.RepeatWrapping;`,
+          }
+        }
+
+        if (isBinaryAudio(relativePath)) {
+          const mimeType = getAudioMimeType(relativePath)
+          const base64Data = buffer.toString("base64")
+          return {
+            success: true,
+            path: relativePath,
+            mediaType: "audio" as const,
+            mimeType,
+            bytes: buffer.byteLength,
+            dataUrl: `data:${mimeType};base64,${base64Data}`,
+            usageCode: `const audio = new Audio('./${relativePath}');\naudio.loop = true;\naudio.volume = 0.5;\ndocument.addEventListener('pointerdown', () => audio.play(), { once: true });`,
+          }
+        }
+
         const content = buffer.toString("utf-8")
         const totalLines =
           content.length === 0 ? 0 : content.split(/\r?\n/).length
@@ -794,6 +987,15 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     execute: async ({ path: filePath }) => {
       try {
         const { fullPath, relativePath } = resolveGamePath(filePath)
+
+        if (isBinaryAsset(filePath)) {
+          return {
+            success: false,
+            path: relativePath,
+            error: `inspect_symbols is strictly for TypeScript/JavaScript code files ('${relativePath}' is a binary asset). To inspect an image or audio asset, call 'read_file'.`,
+          }
+        }
+
         const sandbox = await resolveSandbox()
 
         // 1. Attempt Daytona native TypeScript Language Server Protocol (LSP)
@@ -1066,6 +1268,227 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     },
   })
 
+  const generate_texture = tool({
+    description:
+      "Generate a high-quality 2D game texture or sprite using Google Gemini Image models and save it directly into the sandbox at assets/textures/<filename>.png. Call this tool to generate seamless stone tiles, grass, sci-fi panels, wood, runes, or UI textures. After generating, load it in Three.js via: const texture = new THREE.TextureLoader().load('./assets/textures/<filename>.png');",
+    inputSchema: generateTextureInputSchema,
+    execute: async ({ prompt, filename }) => {
+      try {
+        const cleanName = filename
+          .trim()
+          .replace(/^.*[/\\]/, "")
+          .replace(/\.[a-zA-Z0-9]+$/, "")
+          .replace(/[^a-zA-Z0-9_-]/g, "_")
+        if (!cleanName) {
+          return {
+            success: false,
+            error:
+              "Filename must be a valid alphanumeric identifier (e.g. 'stone_floor', 'dungeon_wall').",
+          }
+        }
+
+        const relPath = `assets/textures/${cleanName}.png`
+        const { fullPath, relativePath } = resolveGamePath(relPath)
+        const sandbox = await resolveSandbox()
+
+        const parentDir = path.posix.dirname(fullPath)
+        try {
+          await sandbox.fs.createFolder(parentDir, "755")
+        } catch {
+          try {
+            await sandbox.process.executeCommand(`mkdir -p "${parentDir}"`)
+          } catch {}
+        }
+
+        const enhancedPrompt = `${prompt.trim()}. Texture for a 3D game. Top-down, seamless, evenly lit, high resolution, suitable for Three.js PBR texturing.`
+        const models = ["gemini-3.1-flash-image", "nano-banana-pro-preview"]
+        let buffer: Buffer | null = null
+        let mimeType = "image/png"
+        let lastError: Error | null = null
+
+        for (const modelId of models) {
+          try {
+            const res = await generateImage({
+              model: google.image(modelId),
+              prompt: enhancedPrompt,
+            })
+            if (res.image?.uint8Array) {
+              buffer = Buffer.from(res.image.uint8Array)
+              mimeType = res.image.mediaType || "image/png"
+              break
+            }
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err))
+          }
+        }
+
+        if (!buffer) {
+          throw (
+            lastError ||
+            new Error("Texture generation failed across all image models.")
+          )
+        }
+
+        await sandbox.fs.uploadFile(buffer, fullPath)
+
+        Sentry.logger.info("Sandbox texture generated", {
+          path: relativePath,
+          bytes: buffer.byteLength,
+          prompt,
+        })
+
+        return {
+          success: true,
+          path: relativePath,
+          bytes: buffer.byteLength,
+          mimeType,
+          usageCode: `const texture = new THREE.TextureLoader().load('./${relativePath}');\ntexture.wrapS = THREE.RepeatWrapping;\ntexture.wrapT = THREE.RepeatWrapping;`,
+          message: `Successfully generated texture '${relativePath}' (${buffer.byteLength} bytes). Load it in Three.js with: const texture = new THREE.TextureLoader().load('./${relativePath}');`,
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        Sentry.logger.error("Sandbox generate_texture failed", {
+          filename,
+          prompt,
+          error: errorMsg,
+        })
+        return {
+          success: false,
+          error: `Failed to generate texture: ${errorMsg}`,
+        }
+      }
+    },
+  })
+
+  const generate_music = tool({
+    description:
+      "Generate a background music track or audio loop using Google Lyria models and save it directly into the sandbox at assets/audio/<filename>.mp3. Call this to generate atmospheric dungeon ambience, synthwave chase music, orchestral fantasy themes, or 8-bit chiptunes. After generating, play it via new Audio('./assets/audio/<filename>.mp3').",
+    inputSchema: generateMusicInputSchema,
+    execute: async ({ prompt, filename, duration = "loop" }) => {
+      try {
+        const cleanName = filename
+          .trim()
+          .replace(/^.*[/\\]/, "")
+          .replace(/\.[a-zA-Z0-9]+$/, "")
+          .replace(/[^a-zA-Z0-9_-]/g, "_")
+        if (!cleanName) {
+          return {
+            success: false,
+            error:
+              "Filename must be a valid alphanumeric identifier (e.g. 'dungeon_theme', 'boss_battle').",
+          }
+        }
+
+        const relPath = `assets/audio/${cleanName}.mp3`
+        const { fullPath, relativePath } = resolveGamePath(relPath)
+        const sandbox = await resolveSandbox()
+
+        const parentDir = path.posix.dirname(fullPath)
+        try {
+          await sandbox.fs.createFolder(parentDir, "755")
+        } catch {
+          try {
+            await sandbox.process.executeCommand(`mkdir -p "${parentDir}"`)
+          } catch {}
+        }
+
+        const isLoop = duration === "loop"
+        const enhancedPrompt = `${prompt.trim()}. ${
+          isLoop
+            ? "Seamless loopable background audio track for a game."
+            : "Full background music track for a game."
+        }`
+
+        const primaryModel = isLoop ? "lyria-3-clip-preview" : "lyria-3.5"
+        const fallbackModel = isLoop ? "lyria-3.5" : "lyria-3-clip-preview"
+        const models = [primaryModel, fallbackModel]
+        let buffer: Buffer | null = null
+        let mimeType = "audio/mpeg"
+        let lastError: Error | null = null
+
+        for (const modelId of models) {
+          try {
+            const res = await generateText({
+              model: google(modelId),
+              prompt: enhancedPrompt,
+            })
+
+            const messages = (res.response?.messages || []) as Array<{
+              role?: string
+              content?: unknown
+            }>
+            for (const msg of messages) {
+              if (Array.isArray(msg.content)) {
+                for (const part of msg.content) {
+                  if (
+                    part &&
+                    typeof part === "object" &&
+                    "type" in part &&
+                    (part as { type: unknown }).type === "file" &&
+                    "data" in part
+                  ) {
+                    const candidate = part as {
+                      data?: string | Uint8Array
+                      mediaType?: string
+                    }
+                    if (candidate.data) {
+                      buffer =
+                        typeof candidate.data === "string"
+                          ? Buffer.from(candidate.data, "base64")
+                          : Buffer.from(candidate.data)
+                      mimeType = candidate.mediaType || "audio/mpeg"
+                      break
+                    }
+                  }
+                }
+              }
+              if (buffer) break
+            }
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err))
+          }
+        }
+
+        if (!buffer) {
+          throw (
+            lastError ||
+            new Error("Music generation failed across all available Lyria models.")
+          )
+        }
+
+        await sandbox.fs.uploadFile(buffer, fullPath)
+
+        Sentry.logger.info("Sandbox music generated", {
+          path: relativePath,
+          bytes: buffer.byteLength,
+          duration,
+          prompt,
+        })
+
+        return {
+          success: true,
+          path: relativePath,
+          bytes: buffer.byteLength,
+          mimeType,
+          duration,
+          usageCode: `const bgm = new Audio('./${relativePath}');\nbgm.loop = true;\nbgm.volume = 0.5;\ndocument.addEventListener('pointerdown', () => bgm.play(), { once: true });`,
+          message: `Successfully generated music track '${relativePath}' (${buffer.byteLength} bytes). Play it with: const bgm = new Audio('./${relativePath}'); bgm.loop = true; bgm.play();`,
+        }
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error)
+        Sentry.logger.error("Sandbox generate_music failed", {
+          filename,
+          prompt,
+          error: errorMsg,
+        })
+        return {
+          success: false,
+          error: `Failed to generate music: ${errorMsg}`,
+        }
+      }
+    },
+  })
+
   return {
     write_file,
     update_file,
@@ -1076,6 +1499,8 @@ export function createGameTools(chatIdOrSandbox?: string | Sandbox) {
     list_files,
     delete_file,
     ask_player,
+    generate_texture,
+    generate_music,
   }
 }
 
@@ -1091,6 +1516,8 @@ export const verify_game = defaultTools.verify_game
 export const list_files = defaultTools.list_files
 export const delete_file = defaultTools.delete_file
 export const ask_player = defaultTools.ask_player
+export const generate_texture = defaultTools.generate_texture
+export const generate_music = defaultTools.generate_music
 
 export const tools = {
   write_file,
@@ -1102,6 +1529,8 @@ export const tools = {
   list_files,
   delete_file,
   ask_player,
+  generate_texture,
+  generate_music,
 }
 
 export const gameTools = tools

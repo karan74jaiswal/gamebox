@@ -27,6 +27,50 @@ export type Vector2Like = THREE.Vector2 | Vector2Tuple | { x: number; y: number 
  */
 export type ColorLike = THREE.ColorRepresentation
 
+/**
+ * Named shared material roles from the technical-art reference.
+ * Reused across meshes that play the same role to maintain cohesive visual hierarchy.
+ */
+export interface MaterialKit {
+  /** Dominant outer shell / primary body */
+  bodyPrimary: THREE.MeshStandardMaterial
+  /** Secondary panel contrast */
+  bodySecondary: THREE.MeshStandardMaterial
+  /** Edge trim, bevels, rails, highlights */
+  trim: THREE.MeshStandardMaterial
+  /** Danger, damage, hazard warning */
+  hazard: THREE.MeshStandardMaterial
+  /** Collectibles and rewards */
+  reward: THREE.MeshStandardMaterial
+  /** Shield, boost, and active status */
+  shieldBoost: THREE.MeshStandardMaterial
+  /** Cockpit, lens, or visor glass */
+  glass: THREE.MeshPhysicalMaterial
+  /** Emissive light strips and signal cues */
+  emissiveSignal: THREE.MeshStandardMaterial
+  /** Ground contact and shadow receivers */
+  groundContact: THREE.MeshStandardMaterial
+  /** Dark panel lines, scratches, markings */
+  decalDark: THREE.MeshBasicMaterial
+  /** Light text, numbers, glyph markings */
+  decalLight: THREE.MeshBasicMaterial
+}
+
+/**
+ * Options for generating a coordinated MaterialKit.
+ */
+export interface MaterialKitOptions {
+  primary?: ColorLike
+  secondary?: ColorLike
+  trim?: ColorLike
+  hazard?: ColorLike
+  reward?: ColorLike
+  shieldBoost?: ColorLike
+  emissive?: ColorLike
+  glass?: ColorLike
+  ground?: ColorLike
+}
+
 // --- Engine -----------------------------------------------------------------
 
 /**
@@ -53,6 +97,53 @@ export interface FogConfig {
 }
 
 /**
+ * Seeded random number generator source.
+ */
+export interface RandomSource {
+  next: () => number
+  range: (min: number, max: number) => number
+  int: (min: number, max: number) => number
+  spread: (magnitude?: number) => number
+  chance: (probability: number) => boolean
+  pick: <T>(list: readonly T[]) => T
+}
+
+/**
+ * Automated test hooks exposed on window.__THREE_GAME_TEST_HOOKS__
+ * for QA visual testing and bot playtesting.
+ */
+export interface TestHooks {
+  /** Seed all gameplay and pitch-variance RNG */
+  seed: (value: number) => void | Promise<void>
+  /** Set named state (active-play, pause, complete) and acknowledge { state: name } */
+  setState: (name: string) => { state: string } | Promise<{ state: string }>
+  /** Stop simulation updates immediately while continuing to render for screenshots */
+  setPausedForScreenshot: (paused: boolean) => void | Promise<void>
+  /** Freeze ambient procedural motion for stable visual baselines */
+  setReducedMotion: (enabled: boolean) => void | Promise<void>
+  /** Hide debug UI overlays for clean captures */
+  hideDebugUi: (hidden: boolean) => void | Promise<void>
+}
+
+/**
+ * Handlers for customizing engine test hook responses.
+ */
+export interface TestHooksHandlers {
+  onSeed?: (value: number) => void
+  onSetState?: (name: string) => { state: string } | void
+  onSetPausedForScreenshot?: (paused: boolean) => void
+  onSetReducedMotion?: (enabled: boolean) => void
+  onHideDebugUi?: (hidden: boolean) => void
+}
+
+declare global {
+  interface Window {
+    __THREE_GAME_DIAGNOSTICS__?: Record<string, unknown>
+    __THREE_GAME_TEST_HOOKS__?: TestHooks
+  }
+}
+
+/**
  * Configuration options for initializing the 3D Engine.
  */
 export interface EngineOptions {
@@ -60,6 +151,8 @@ export interface EngineOptions {
   container?: HTMLElement
   /** Existing canvas element to render into (if omitted, a new canvas is created) */
   canvas?: HTMLCanvasElement
+  /** Optional custom or pre-instantiated WebGLRenderer */
+  renderer?: THREE.WebGLRenderer
   /** Scene background color, or null for transparent */
   background?: ColorLike | null
   /** Fog density distance (number) or explicit { color, near, far } config */
@@ -88,6 +181,8 @@ export interface EngineOptions {
   exposure?: number
   /** Automatically pause engine loops when tab/window is hidden */
   pauseWhenHidden?: boolean
+  /** Neutral IBL or custom environment map (defaults to true for realistic PBR reflections) */
+  environment?: boolean | "neutral" | THREE.Texture
 }
 
 /**
@@ -111,7 +206,9 @@ export interface Engine {
   timer: THREE.Timer
   /** Current viewport dimensions in CSS pixels */
   size: { width: number; height: number }
-  /** Delta time in seconds since last frame (scaled by timeScale) */
+  /** Raw unscaled frame delta in seconds (before hitstop or timeScale) */
+  rawDt: number
+  /** Delta time in seconds since last frame (scaled by timeScale and hitstop) */
   dt: number
   /** Total elapsed time in seconds since engine start (scaled) */
   elapsed: number
@@ -125,6 +222,15 @@ export interface Engine {
   readonly running: boolean
   /** True if the engine is currently paused */
   readonly paused: boolean
+
+  /** Trigger a hitstop frame freeze effect */
+  hitstop: (durationMs?: number, timeScale?: number) => void
+
+  /** Setup or update neutral room environment IBL for PBR reflections */
+  setupEnvironment: (mode?: "neutral" | THREE.Texture | boolean | null) => THREE.Texture | null
+
+  /** Publish or update diagnostics data on window.__THREE_GAME_DIAGNOSTICS__ */
+  publishDiagnostics: (extra?: Record<string, unknown>) => void
 
   /**
    * Register a callback to run on every frame update before rendering.
@@ -187,6 +293,15 @@ export interface Engine {
    * Pass null to restore standard direct-to-canvas rendering.
    */
   setRenderTarget: (target: RenderTarget | null) => void
+
+  /** Whether reduced motion is active for animations and camera shake */
+  reducedMotion: boolean
+  /** Active seeded random number generator */
+  rng: RandomSource
+  /** Installed automated test hooks */
+  testHooks?: TestHooks
+  /** Install or reconfigure test hooks for automated bot playtesting and visual regression */
+  installTestHooks: (handlers?: TestHooksHandlers) => TestHooks
 
   /**
    * Dispose all engine resources, remove canvas from DOM, and remove all event listeners.
@@ -562,7 +677,9 @@ export interface ToneConfig {
   attack?: number
   /** Delay before starting tone in seconds */
   delay?: number
-  /** Target AudioNode destination (defaults to master gain) */
+  /** Channel group (defaults to 'sfx' or 'ui') */
+  group?: AudioGroup
+  /** Target AudioNode destination (defaults to master or channel gain) */
   destination?: AudioNode
 }
 
@@ -584,6 +701,10 @@ export interface NoiseConfig {
   Q?: number
   /** Delay before playing noise in seconds */
   delay?: number
+  /** Channel group (defaults to 'sfx' or 'ui') */
+  group?: AudioGroup
+  /** Target AudioNode destination (defaults to master or channel gain) */
+  destination?: AudioNode
 }
 
 /**
@@ -597,9 +718,16 @@ export type SoundOutput = OscillatorNode | AudioBufferSourceNode | void
 export type SoundFactory = (config?: SoundPlayConfig) => SoundOutput
 
 /**
+ * Audio mixer channel groups.
+ */
+export type AudioGroup = "master" | "sfx" | "ui" | "ambience" | "voice" | "music"
+
+/**
  * Playback modification config passed when playing a sound.
  */
 export interface SoundPlayConfig {
+  /** Channel group (defaults to 'sfx' or 'ui') */
+  group?: AudioGroup
   /** Pitch multiplier (e.g. 1.5 for higher pitch, 0.8 for lower) */
   pitch?: number
   /** Random pitch variation range (+/-) */
@@ -699,7 +827,7 @@ export interface AudioSystem {
    */
   playClip: (
     name: string,
-    options?: { volume?: number; pitchVariance?: number; loop?: boolean }
+    options?: { volume?: number; pitchVariance?: number; loop?: boolean; group?: AudioGroup }
   ) => AudioBufferSourceNode | undefined
 
   /**
@@ -714,6 +842,42 @@ export interface AudioSystem {
    * Stops active streaming background music.
    */
   stopMusic: (fadeOut?: number) => void
+
+  /** Get volume for a channel group [0..1] */
+  getGroupVolume: (group: AudioGroup) => number
+
+  /** Set volume for a channel group [0..1] */
+  setGroupVolume: (group: AudioGroup, volume: number) => void
+
+  /** Mute or unmute a specific channel group */
+  muteGroup: (group: AudioGroup, muted?: boolean) => void
+
+  /** Check if a specific channel group is muted */
+  isGroupMuted: (group: AudioGroup) => boolean
+
+  /**
+   * Temporarily duck music and ambience during hitstop or voiceover and ramp back.
+   */
+  duck: (factor?: number, durationSec?: number) => void
+
+  /**
+   * Plays a sound effect with a cooldown in ms to prevent repetitive machine-gunning.
+   */
+  playWithCooldown: (
+    name: string,
+    cooldownMs?: number,
+    config?: SoundPlayConfig
+  ) => SoundOutput
+
+  /**
+   * Plays a sound effect with 3D distance attenuation and stereo panning.
+   */
+  playAt: (
+    name: string,
+    position: Vector3Like,
+    listener?: Vector3Like | THREE.Camera,
+    config?: SoundPlayConfig & { maxDistance?: number }
+  ) => SoundOutput
 
   /**
    * Close AudioContext and clean up resources.
@@ -1214,6 +1378,170 @@ export interface HudManager {
 
   /** Remove root HUD container from DOM */
   remove: () => void
+
+  /** Create a dual-layer health meter with delayed damage trail and optional shield */
+  healthBar?: (options?: HealthBarOptions) => HealthBarComponent
+
+  /** Create an objective card with progress track and optional mission timer */
+  objectiveCard?: (options?: ObjectiveCardOptions) => ObjectiveCardComponent
+
+  /** Create a punchy score widget with combo multiplier and high score */
+  scoreBadge?: (options?: ScoreBadgeOptions) => ScoreBadgeComponent
+
+  /** Create a modal dialog overlay (game over, victory, pause, custom) */
+  modalOverlay?: (options: ModalOverlayOptions) => ModalOverlayComponent
+
+  /** Create dual-stick or thumbstick + action touch controls with pointer capture */
+  touchControls?: (options?: TouchControlsOptions) => TouchControlsComponent
+}
+
+/**
+ * Options for creating an advanced dual-layer health/status meter.
+ */
+export interface HealthBarOptions {
+  container?: HTMLElement
+  at?: HudCornerName
+  label?: string
+  max?: number
+  current?: number
+  showShield?: boolean
+  maxShield?: number
+  shield?: number
+  color?: string
+  shieldColor?: string
+  dangerColor?: string
+  dangerBelow?: number
+}
+
+/**
+ * Interactive dual-layer health bar with animated damage trail.
+ */
+export interface HealthBarComponent {
+  element: HTMLElement
+  setHealth: (current: number, max?: number) => void
+  setShield: (current: number, max?: number) => void
+  setLabel: (label: string) => void
+  remove: () => void
+}
+
+/**
+ * Options for objective tracking HUD card.
+ */
+export interface ObjectiveCardOptions {
+  container?: HTMLElement
+  at?: HudCornerName
+  title?: string
+  detail?: string
+  current?: number
+  total?: number
+  timeRemaining?: number
+  showTimer?: boolean
+}
+
+/**
+ * Objective status card component with progress bar and countdown timer.
+ */
+export interface ObjectiveCardComponent {
+  element: HTMLElement
+  setTitle: (title: string) => void
+  setDetail: (detail: string) => void
+  setProgress: (current: number, total?: number) => void
+  setTimer: (seconds: number) => void
+  complete: () => void
+  remove: () => void
+}
+
+/**
+ * Options for animated score and combo badge widget.
+ */
+export interface ScoreBadgeOptions {
+  container?: HTMLElement
+  at?: HudCornerName
+  label?: string
+  score?: number
+  highScore?: number
+  combo?: number
+  multiplier?: number
+}
+
+/**
+ * Score badge component with animated combo multipliers.
+ */
+export interface ScoreBadgeComponent {
+  element: HTMLElement
+  setScore: (score: number) => void
+  addScore: (delta: number) => void
+  setHighScore: (highScore: number) => void
+  setCombo: (combo: number, multiplier?: number) => void
+  resetCombo: () => void
+  bump: () => void
+  remove: () => void
+}
+
+/**
+ * Stat entry for modal overlays.
+ */
+export interface ModalStat {
+  label: string
+  value: string | number
+  highlight?: boolean
+}
+
+/**
+ * Options for modal overlay dialogs (Game Over, Victory, Pause, Info).
+ */
+export interface ModalOverlayOptions {
+  container?: HTMLElement
+  type?: "game-over" | "victory" | "pause" | "info"
+  title: string
+  subtitle?: string
+  stats?: ModalStat[]
+  primaryLabel?: string
+  onPrimary?: () => void
+  secondaryLabel?: string
+  onSecondary?: () => void
+  dismissible?: boolean
+}
+
+/**
+ * Modal dialog overlay component.
+ */
+export interface ModalOverlayComponent {
+  element: HTMLElement
+  updateStats: (stats: ModalStat[]) => void
+  close: () => void
+}
+
+/**
+ * Action button configuration for mobile on-screen controls.
+ */
+export interface TouchButtonConfig {
+  id: string
+  label: string
+  color?: string
+  action?: string
+}
+
+/**
+ * Options for mobile virtual thumbstick and action controls.
+ */
+export interface TouchControlsOptions {
+  container?: HTMLElement
+  input?: InputManager
+  onlyOnTouch?: boolean
+  stick?: boolean
+  buttons?: TouchButtonConfig[]
+  onMove?: (vector: { x: number; y: number }) => void
+  onButton?: (id: string, pressed: boolean) => void
+}
+
+/**
+ * Mobile on-screen thumbstick and action buttons controller.
+ */
+export interface TouchControlsComponent {
+  element: HTMLElement
+  vector: { x: number; y: number }
+  remove: () => void
 }
 
 // --- State & Storage --------------------------------------------------------
@@ -1489,4 +1817,14 @@ export interface Game {
   start: Engine["start"]
   /** Shortcut to engine.stop */
   stop: Engine["stop"]
+  /** Trigger a hitstop frame freeze effect */
+  hitstop: Engine["hitstop"]
+  /** Publish or update diagnostics data on window.__THREE_GAME_DIAGNOSTICS__ */
+  publishDiagnostics: Engine["publishDiagnostics"]
+  /** Active seeded random number generator */
+  rng: Engine["rng"]
+  /** Installed automated test hooks */
+  testHooks?: TestHooks
+  /** Install or reconfigure test hooks for automated bot playtesting and visual regression */
+  installTestHooks: Engine["installTestHooks"]
 }

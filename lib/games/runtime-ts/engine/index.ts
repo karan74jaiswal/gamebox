@@ -29,19 +29,62 @@ export * as lights from "./lighting.ts"
 export * as effects from "./particles.ts"
 export * as anim from "./animation.ts"
 export * as debug from "./debug.ts"
-export * as assets from "./assets/catalog.ts"
 export * as camera from "./camera.ts"
 export * as combat from "./combat.ts"
 export * as flight from "./flight.ts"
 export * as surface from "./surface.ts"
 export * as audioReactive from "./audio-reactive.ts"
+export * as gameFeel from "./game-feel.ts"
 
-export { createEngine, disposeObject } from "./engine.ts"
+export { createEngine, setupNeutralEnvironment, disposeObject } from "./engine.ts"
 export { createInput } from "./input.ts"
-export { createHud } from "./hud.ts"
+export {
+  createHud,
+  createHealthBar,
+  createObjectiveCard,
+  createScoreBadge,
+  createModalOverlay,
+  createTouchControls,
+} from "./hud.ts"
 export { createAudio } from "./sound.ts"
 export { createPhysics, hits, inside } from "./physics.ts"
 export { createPostFX } from "./postfx.ts"
+
+export {
+  ShakeRig,
+  HitstopManager,
+  squashAndStretch,
+  FovPuncher,
+  flashHit,
+} from "./game-feel.ts"
+export { CameraRig } from "./camera.ts"
+
+export {
+  createHeroVehicle,
+  createHeroCharacter,
+  createObstacle,
+  createReward,
+  createWorldPropKit,
+  getModelDiagnostics,
+} from "./models.ts"
+
+export {
+  paintedMetal,
+  brushedMetal,
+  rubber,
+  mattePlastic,
+  glossyCeramic,
+  emissiveSignal,
+  cloth,
+  cheapGlass,
+  refractiveGlass,
+  proceduralTextures,
+  applyFresnelRim,
+  applyScrollingEmissive,
+  applyWindSway,
+  createSkyDome,
+  createMaterialKit,
+} from "./materials.ts"
 
 export {
   createTweens,
@@ -88,19 +131,12 @@ export {
 
 export { palette, brand } from "./materials.ts"
 export { createChaseCamera, createFirstPersonBob } from "./camera.ts"
-export {
-  ASSET_CATALOG,
-  ASSET_PACKS,
-  DRACO_DECODER_PATH,
-  searchAssets,
-  getAssetUrl,
-  listPacks,
-  MASTER_ASSETS,
-} from "./assets/catalog.ts"
+export { DRACO_DECODER_PATH } from "./models.ts"
 export { calculateKnockback, checkHit, createFighterAI } from "./combat.ts"
 export { createFlightModel } from "./flight.ts"
 export { createSurfacePainter } from "./surface.ts"
 export { createAudioAnalyser } from "./audio-reactive.ts"
+export { createRandom, createSeededRandom } from "./math.ts"
 
 /**
  * Everything a game needs, started and ready.
@@ -144,6 +180,21 @@ export function createGame(options: GameOptions = {}): Game {
     remove: engine.remove,
     start: engine.start,
     stop: engine.stop,
+    hitstop: engine.hitstop,
+    publishDiagnostics: engine.publishDiagnostics,
+    get rng() {
+      return engine.rng
+    },
+    set rng(val) {
+      engine.rng = val
+    },
+    get testHooks() {
+      return engine.testHooks
+    },
+    set testHooks(val) {
+      engine.testHooks = val
+    },
+    installTestHooks: engine.installTestHooks,
   }
 
   if (typeof window !== "undefined") {

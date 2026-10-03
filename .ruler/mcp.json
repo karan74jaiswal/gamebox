@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "trigger": {
+      "args": [
+        "trigger.dev@latest",
+        "mcp",
+        "--dev-only"
+      ],
+      "command": "npx",
+      "type": "stdio"
+    }
+  }
+}
