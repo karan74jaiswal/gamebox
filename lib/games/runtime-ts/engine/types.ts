@@ -1510,6 +1510,7 @@ export interface ModalOverlayComponent {
   element: HTMLElement
   updateStats: (stats: ModalStat[]) => void
   close: () => void
+  remove: () => void
 }
 
 /**

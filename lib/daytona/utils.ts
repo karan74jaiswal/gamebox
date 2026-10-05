@@ -227,7 +227,7 @@ export async function seedSandboxFiles(sandbox: Sandbox): Promise<void> {
   }
 }
 
-export const DEFAULT_DAYTONA_SNAPSHOT = "gamebox-runtime-v4"
+export const DEFAULT_DAYTONA_SNAPSHOT = "gamebox-runtime-v5"
 
 /**
  * Creates a Daytona sandbox for a game.

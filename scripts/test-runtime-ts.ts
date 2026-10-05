@@ -874,12 +874,26 @@ test("HUD components creation and API", () => {
   const modal = runtime.createModalOverlay({ title: "VICTORY", type: "victory", stats: [{ label: "TIME", value: "01:23" }] })
   assert.ok(modal.element)
   modal.updateStats([{ label: "TIME", value: "01:23", highlight: true }])
-  modal.close()
+  assert.equal(typeof modal.remove, "function")
+  modal.remove()
 
   const touch = runtime.createTouchControls({ onlyOnTouch: false })
   assert.ok(touch.element)
   assert.equal(typeof touch.vector.x, "number")
   touch.remove()
+
+  // Verify input pointer down/up does not throw even if setPointerCapture throws or pointer lock is active
+  const mockElement: any = {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+    setPointerCapture: () => { throw new Error("InvalidStateError") },
+    releasePointerCapture: () => { throw new Error("InvalidStateError") },
+    hasPointerCapture: () => false,
+  }
+  const input = runtime.createInput({ element: mockElement })
+  assert.ok(input)
+  input.dispose()
 })
 
 console.log("\n▶ Testing engine diagnostics and environment")

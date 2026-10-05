@@ -166,7 +166,13 @@ export function createInput(options: InputOptions = {}): InputManager {
     if (!held.has(code)) justPressed.add(code)
     held.add(code)
     input.pointerDown = true
-    element.setPointerCapture?.(event.pointerId)
+    try {
+      if (typeof document !== "undefined" && document.pointerLockElement !== element) {
+        element.setPointerCapture?.(event.pointerId)
+      }
+    } catch {
+      // Ignored if pointer lock is active, capture is restricted, or pointer was invalidated
+    }
   }
 
   function onPointerUp(event: PointerEvent) {
@@ -174,7 +180,13 @@ export function createInput(options: InputOptions = {}): InputManager {
     held.delete(code)
     justReleased.add(code)
     input.pointerDown = held.has("Mouse0")
-    element.releasePointerCapture?.(event.pointerId)
+    try {
+      if (element.hasPointerCapture?.(event.pointerId)) {
+        element.releasePointerCapture?.(event.pointerId)
+      }
+    } catch {
+      // Ignored if pointer was not captured
+    }
   }
 
   function onPointerMove(event: PointerEvent) {

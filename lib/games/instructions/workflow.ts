@@ -259,6 +259,10 @@ Make confident, instant architectural choices between **Specialist Skills**, **E
      spawnProjectile(weaponTipWorldPos, shootDir)
      \`\`\`
 
+6. **Anti-Pattern 6: Dynamic PointLights on Rapid Projectiles & SVG Syntax Errors**:
+   - **STRICTLY FORBIDDEN**: Never attach \`new THREE.PointLight()\` or \`SpotLight()\` to bullets, laser blasts, or missiles. Dynamically adding or removing light sources triggers expensive WebGL shader recompilations on every shot, causing massive 100ms+ stutter spikes. Never use CSS math expressions like \`calc(...)\` inside SVG path coordinate attributes (\`<path d="...">\`), which causes browser parser errors.
+   - **REQUIRED**: Use glowing emissive materials (\`materials.emissive(...)\`) paired with the bloom pass (\`createPostFX\`) for projectile glows. In custom HUDs, cache previous values and update DOM elements only when values change; for moving 2D screen projections (like target brackets), use GPU-accelerated CSS \`transform: translate3d(x, y, 0)\`.
+
 # What to build
 
 - End every turn with a game that runs. A turn that leaves the game broken is

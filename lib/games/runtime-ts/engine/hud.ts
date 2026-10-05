@@ -1424,6 +1424,9 @@ export function createModalOverlay(options: ModalOverlayOptions): ModalOverlayCo
       }
       backdrop.remove()
     },
+    remove() {
+      handle.close()
+    },
   }
 
   return handle
@@ -1489,7 +1492,11 @@ export function createTouchControls(options: TouchControlsOptions = {}): TouchCo
     stickZone.addEventListener("pointerdown", (e: PointerEvent) => {
       e.preventDefault?.()
       activePointerId = e.pointerId
-      stickZone.setPointerCapture?.(e.pointerId)
+      try {
+        stickZone.setPointerCapture?.(e.pointerId)
+      } catch {
+        // Ignored if pointer was invalidated
+      }
       const rect = stickBase.getBoundingClientRect()
       const centerX = rect.left + rect.width / 2
       const centerY = rect.top + rect.height / 2

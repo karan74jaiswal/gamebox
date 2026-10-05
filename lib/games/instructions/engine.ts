@@ -298,14 +298,15 @@ let startModal: any = null
 let pauseModal: any = null
 let endModal: any = null
 
-const fsm = createStateMachine({
+let fsm: any
+fsm = createStateMachine({
   // 1. Loading: Preload textures/audio and pre-compile shaders to eliminate flicker & lag
   loading: {
-    enter() {
+    enter(_payload, machine) {
       // Pre-compile all scene materials and shaders into GPU cache:
       renderer.compile(scene, camera)
       // Transition to Start screen once assets & shaders are ready:
-      fsm.go("start")
+      machine.go("start")
     }
   },
 
@@ -322,16 +323,19 @@ const fsm = createStateMachine({
           { label: "Dash Boost", value: "Space / Shift" },
           { label: "Pause Menu", value: "P / Esc" }
         ],
-        actions: [{
-          label: "START MISSION",
-          onClick: () => {
-            startModal?.remove()
-            // Unlocks audio and streams BGM cleanly on user gesture:
-            game.audio.playMusic("./assets/audio/theme.mp3", { loop: true, fadeIn: 1 })
-            fsm.go("playing")
-          }
-        }]
+        primaryLabel: "START MISSION [SPACE]",
+        onPrimary: () => {
+          startModal?.close()
+          startModal = null
+          // Unlocks audio and streams BGM cleanly on user gesture:
+          game.audio.playMusic("./assets/audio/theme.mp3", { loop: true, fadeIn: 1 })
+          fsm.go("playing")
+        }
       })
+    },
+    exit() {
+      startModal?.close()
+      startModal = null
     }
   },
 
@@ -349,14 +353,24 @@ const fsm = createStateMachine({
       pauseModal = createModalOverlay({
         title: "GAME PAUSED",
         type: "pause",
-        actions: [
-          { label: "RESUME", onClick: () => { pauseModal?.remove(); fsm.go("playing") } },
-          { label: "RESTART", onClick: () => { pauseModal?.remove(); resetGame(); fsm.go("playing") } }
-        ]
+        primaryLabel: "RESUME [ESC]",
+        onPrimary: () => {
+          pauseModal?.close()
+          pauseModal = null
+          fsm.go("playing")
+        },
+        secondaryLabel: "RESTART [R]",
+        onSecondary: () => {
+          pauseModal?.close()
+          pauseModal = null
+          resetGame()
+          fsm.go("playing")
+        }
       })
     },
     exit() {
-      pauseModal?.remove()
+      pauseModal?.close()
+      pauseModal = null
     }
   },
 
@@ -366,21 +380,24 @@ const fsm = createStateMachine({
       // Playing logic is fully halted (see guard in onUpdate below!)
       endModal = createModalOverlay({
         title: payload.won ? "VICTORY ACHIEVED" : "MISSION FAILED",
-        type: payload.won ? "victory" : "defeat",
+        type: payload.won ? "victory" : "game-over",
         subtitle: payload.won ? "All enemy threats eliminated!" : "The core was destroyed.",
         stats: [
-          { label: "Final Score", value: payload.score },
+          { label: "Final Score", value: String(payload.score) },
           { label: "Time Survived", value: \`\${Math.round(payload.time)}s\` }
         ],
-        actions: [{
-          label: "PLAY AGAIN",
-          onClick: () => {
-            endModal?.remove()
-            resetGame()
-            fsm.go("playing")
-          }
-        }]
+        primaryLabel: "PLAY AGAIN [R]",
+        onPrimary: () => {
+          endModal?.close()
+          endModal = null
+          resetGame()
+          fsm.go("playing")
+        }
       })
+    },
+    exit() {
+      endModal?.close()
+      endModal = null
     }
   }
 }, "loading", engine)
@@ -391,9 +408,16 @@ window.addEventListener("keydown", (e) => {
     if (fsm.is("playing")) fsm.go("paused")
     else if (fsm.is("paused")) fsm.go("playing")
   } else if (e.code === "KeyR" && (fsm.is("over") || fsm.is("paused"))) {
-    endModal?.remove()
-    pauseModal?.remove()
+    endModal?.close()
+    endModal = null
+    pauseModal?.close()
+    pauseModal = null
     resetGame()
+    fsm.go("playing")
+  } else if (e.code === "Space" && fsm.is("start")) {
+    startModal?.close()
+    startModal = null
+    game.audio.playMusic("./assets/audio/theme.mp3", { loop: true, fadeIn: 1 })
     fsm.go("playing")
   }
 })
@@ -429,6 +453,9 @@ engine.onUpdate((dt) => {
 5. **Always converge weapon projectiles**: Raycast forward from camera center and converge weapon muzzle direction to the aim point to eliminate parallax error.
 6. **Route randomness through seeded RNG**: Use \`game.rng\` or \`createSeededRandom(seed)\` so test hooks and bot playtests remain deterministic.
 7. **Always enforce full game lifecycle**: Pre-warm shaders in loading (\`renderer.compile\`), display controls on Start Screen (unlocking audio on click), support pause (\`Esc\` / \`P\`), and completely halt simulation logic on Game Over or Victory.
+8. **NEVER attach dynamic PointLight or SpotLight to bullets, missiles, or rapid projectiles**: Adding or removing lights dynamically in Three.js alters WebGL shader uniform layouts and forces full recompilation of all material shaders on every shot, causing massive 100ms+ stutter spikes. Use emissive materials (\`materials.emissive(...)\`) paired with the UnrealBloomPass in \`createPostFX\` for high-performance glowing rounds.
+9. **Never mutate DOM styles every frame without change detection**: In custom HUD overlays, cache previous values and only update \`.textContent\` or width percentages when values actually change. For 2D screen positions (like target brackets), use GPU-accelerated CSS \`transform: translate3d(x, y, 0)\`, NEVER \`el.style.left\` and \`el.style.top\`.
+10. **Clamp High-DPI Pixel Ratio with PostFX**: When using \`createPostFX\` (bloom), clamp \`renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))\` so 2x/3x Retina screens do not suffer GPU fillrate bottlenecks.
 `
 
 export const engineInstructions = engine
