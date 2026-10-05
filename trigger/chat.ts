@@ -3,7 +3,10 @@ import { chat, upsertIncomingMessage } from "@trigger.dev/sdk/ai"
 import {
   convertToModelMessages,
   isToolUIPart,
+  pruneMessages,
   stepCountIs,
+  type Instructions,
+  type LanguageModel,
   type ModelMessage,
   type ToolSet,
   type UIMessage,
@@ -35,6 +38,14 @@ import {
   logTurnFailure,
   prepareStepContext,
 } from "./chat-helpers"
+import {
+  ARCHITECT_SYSTEM_PROMPT,
+  ARTIST_SYSTEM_PROMPT,
+  ENGINEER_SYSTEM_PROMPT,
+  architectTools,
+  artistTools,
+  engineerTools,
+} from "@/lib/games/agents"
 
 const streamErrorKey = locals.create<string>("game-chat.streamError")
 const rawStreamErrorKey = locals.create<string>("game-chat.rawStreamError")
@@ -108,7 +119,8 @@ async function prepareRetryContext(params: {
   // Strip any trailing assistant messages so the request strictly ends with role: "tool"
   while (
     sanitizedRetryMessages.length > 0 &&
-    sanitizedRetryMessages[sanitizedRetryMessages.length - 1].role === "assistant"
+    sanitizedRetryMessages[sanitizedRetryMessages.length - 1].role ===
+      "assistant"
   ) {
     sanitizedRetryMessages.pop()
   }
@@ -119,49 +131,286 @@ async function prepareRetryContext(params: {
   }
 }
 
+interface AgentPhaseParams {
+  phaseName: string
+  statusText: string
+  instructions: Instructions
+  tools: ToolSet
+  messages: ModelMessage[]
+  maxSteps: number
+  selectedModel: LanguageModel
+  signal?: AbortSignal
+  chatId: string
+  orgId: string
+  modelId: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  streamText: (options: any) => any
+  lastResponseMessage?: UIMessage
+}
+
+/**
+ * Executes a single agent phase within a turn, streaming reasoning, tool calls,
+ * and text directly to the user UI via Trigger.dev chat.pipeAndCapture.
+ * Supports automatic mid-stream pause and resumption for Vertex AI rate limits.
+ */
+async function runAgentPhase(params: AgentPhaseParams): Promise<{
+  success: boolean
+  aborted?: boolean
+  lastResponseMessage?: UIMessage
+}> {
+  const {
+    phaseName,
+    statusText,
+    instructions,
+    tools: phaseTools,
+    messages: phaseMessages,
+    maxSteps,
+    selectedModel,
+    signal,
+    chatId,
+    orgId,
+    modelId,
+    streamText,
+  } = params
+
+  const MAX_PHASE_RETRIES = 3
+  let currentModelMessages = phaseMessages
+  let lastError: unknown
+  let currentResponse = params.lastResponseMessage
+
+  // Stream user-facing status indicator
+  chat.response.write({
+    type: "data-step-status",
+    id: "step-status",
+    data: { text: statusText },
+    transient: true,
+  })
+
+  for (let attempt = 0; attempt < MAX_PHASE_RETRIES; attempt++) {
+    if (signal?.aborted || chat.isStopped()) {
+      return {
+        success: false,
+        aborted: true,
+        lastResponseMessage: currentResponse,
+      }
+    }
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = streamText({
+        model: selectedModel,
+        tools: phaseTools,
+        instructions,
+        messages: currentModelMessages,
+        abortSignal: signal,
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onLanguageModelCallStart: (event: any) => {
+          const rawInstructions = event.instructions
+          const systemPromptText =
+            typeof rawInstructions === "string"
+              ? rawInstructions
+              : Array.isArray(rawInstructions)
+                ? rawInstructions
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    .map((m: any) =>
+                      typeof m === "object" && m && "content" in m
+                        ? String(m.content)
+                        : JSON.stringify(m)
+                    )
+                    .join("\n\n---\n\n")
+                : typeof rawInstructions === "object" &&
+                    rawInstructions &&
+                    "content" in rawInstructions
+                  ? String((rawInstructions as { content: unknown }).content)
+                  : JSON.stringify(rawInstructions)
+
+          const toolNames = event.tools
+            ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              event.tools
+                .map((t: any) => (t as { name?: string }).name)
+                .filter(Boolean)
+            : []
+
+          logger.info(
+            `==================== [LLM CALL: ${phaseName.toUpperCase()}] (Chat: ${chatId} | Attempt: ${attempt + 1}) ====================`,
+            {
+              phase: phaseName,
+              attempt: attempt + 1,
+              provider: event.provider,
+              modelId: event.modelId,
+              callId: event.callId,
+              systemPrompt: systemPromptText,
+              toolNames,
+              toolsCount: toolNames.length,
+              messagesCount: event.messages?.length ?? 0,
+            }
+          )
+        },
+
+        stopWhen: stepCountIs(maxSteps),
+        maxRetries: 4,
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        prepareStep: async ({ messages: stepMessages, steps }: any) =>
+          prepareStepContext({ messages: stepMessages, steps, chatId }),
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onStepFinish: async (step: any) =>
+          chargeStepCredits(step, { orgId, chatId, modelId }),
+
+        providerOptions: {
+          vertex: {
+            thinkingConfig: {
+              includeThoughts: true,
+            },
+          },
+          google: {
+            store: false,
+            thinkingConfig: {
+              includeThoughts: true,
+            },
+            thinkingLevel: "high",
+            thinkingSummaries: "auto",
+          },
+        },
+      })
+
+      const pipeResult = await chat.pipeAndCapture(result, {
+        signal,
+        originalMessages: currentResponse
+          ? upsertMessage(chat.history.all(), currentResponse)
+          : chat.history.all(),
+      })
+
+      if (pipeResult.message) {
+        currentResponse = pipeResult.message
+      }
+
+      if (
+        signal?.aborted ||
+        chat.isStopped() ||
+        pipeResult.status === "aborted"
+      ) {
+        return {
+          success: false,
+          aborted: true,
+          lastResponseMessage: currentResponse,
+        }
+      }
+
+      const streamError = locals.get(streamErrorKey)
+      const rawStreamError = locals.get(rawStreamErrorKey)
+      const storedResolvedError = locals.get(resolvedErrorKey)
+
+      const isErrorFinish =
+        pipeResult.status === "error" ||
+        pipeResult.finishReason === "error" ||
+        pipeResult.finishReason === "other" ||
+        Boolean(pipeResult.error) ||
+        Boolean(streamError) ||
+        Boolean(storedResolvedError)
+
+      if (!isErrorFinish && pipeResult.status === "complete") {
+        return { success: true, lastResponseMessage: currentResponse }
+      }
+
+      lastError =
+        pipeResult.error ||
+        rawStreamError ||
+        streamError ||
+        (pipeResult.finishReason
+          ? new Error(
+              `Stream terminated prematurely with finishReason: ${pipeResult.finishReason}`
+            )
+          : new Error("Stream interrupted"))
+
+      const isQuotaOrInterrupted =
+        isRetryableQuotaError(lastError, pipeResult.finishReason) ||
+        storedResolvedError?.category === "rate_limit"
+
+      if (!isQuotaOrInterrupted || attempt >= MAX_PHASE_RETRIES - 1) {
+        if (lastError) throw lastError
+        return { success: false, lastResponseMessage: currentResponse }
+      }
+
+      locals.set(streamErrorKey, undefined)
+      locals.set(rawStreamErrorKey, undefined)
+      locals.set(resolvedErrorKey, undefined)
+
+      const waitSec = 20 + attempt * 5
+      logger.warn(
+        `Vertex AI rate-limit/interruption in ${phaseName} (attempt ${attempt + 1}/${MAX_PHASE_RETRIES}). Pausing ${waitSec}s to replenish quota...`,
+        {
+          chatId,
+          attempt: attempt + 1,
+          finishReason: pipeResult.finishReason,
+          error:
+            lastError instanceof Error ? lastError.message : String(lastError),
+        }
+      )
+
+      chat.response.write({
+        type: "data-step-status",
+        id: "step-status",
+        data: {
+          text: `Pausing to replenish quota before continuing ${phaseName}...`,
+        },
+        transient: true,
+      })
+
+      await new Promise((r) => setTimeout(r, waitSec * 1000))
+
+      const { modelMessages, retryMessage } = await prepareRetryContext({
+        sanitizedMessages: phaseMessages,
+        lastResponseMessage: currentResponse,
+        tools: phaseTools,
+      })
+      currentResponse = retryMessage
+      currentModelMessages = modelMessages
+    } catch (err) {
+      lastError = err
+      if (signal?.aborted || chat.isStopped()) {
+        return {
+          success: false,
+          aborted: true,
+          lastResponseMessage: currentResponse,
+        }
+      }
+      const isQuotaOrInterrupted = isRetryableQuotaError(err)
+      if (!isQuotaOrInterrupted || attempt >= MAX_PHASE_RETRIES - 1) {
+        throw err
+      }
+
+      locals.set(streamErrorKey, undefined)
+      locals.set(rawStreamErrorKey, undefined)
+      locals.set(resolvedErrorKey, undefined)
+
+      const waitSec = 20 + attempt * 5
+      logger.warn(
+        `Vertex AI threw retryable error in ${phaseName} (attempt ${attempt + 1}/${MAX_PHASE_RETRIES}). Waiting ${waitSec}s...`,
+        { error: err instanceof Error ? err.message : String(err) }
+      )
+
+      chat.response.write({
+        type: "data-step-status",
+        id: "step-status",
+        data: {
+          text: "Preparing next step...",
+        },
+        transient: true,
+      })
+
+      await new Promise((r) => setTimeout(r, waitSec * 1000))
+    }
+  }
+
+  return { success: false, lastResponseMessage: currentResponse }
+}
+
 export const gameChat = chat.agent({
   id: "game-chat",
   tools,
-
-  // compaction: {
-  //   shouldCompact: ({ totalTokens }) => (totalTokens ?? 0) > 1_000_000,
-  //   summarize: async ({ chatId }) => {
-  //     try {
-  //       if (!chatId) {
-  //         return "Game development turn completed. Code state persisted in sandbox."
-  //       }
-  //       const sandbox = await getGameSandbox(chatId)
-  //       const gitStatus = await sandbox.git.status(GAME_DIR)
-  //       const modifiedFiles = gitStatus.fileStatus?.map((f) => f.name) ?? []
-
-  //       let activePlanSummary = ""
-  //       try {
-  //         const planBuf = await sandbox.fs.downloadFile(
-  //           `${GAME_DIR}/artifacts/game-plan.md`
-  //         )
-  //         const planText = planBuf.toString("utf-8")
-  //         if (planText) {
-  //           activePlanSummary = `\n- Active Plan: ${planText.slice(0, 500)}...`
-  //         }
-  //       } catch {
-  //         // Plan file might not exist yet in turn 1
-  //       }
-
-  //       return [
-  //         "### Verified Turn Summary (Grounded via Daytona Git & FS)",
-  //         modifiedFiles.length > 0
-  //           ? `- Files Modified/Created: ${modifiedFiles.join(", ")}`
-  //           : "- Files on disk verified and unchanged.",
-  //         "- Working directory: /home/daytona/game",
-  //         activePlanSummary,
-  //       ]
-  //         .filter(Boolean)
-  //         .join("\n")
-  //     } catch {
-  //       return "Game development turn completed. Code state persisted in Daytona sandbox."
-  //     }
-  //   },
-  // },
 
   clientDataSchema: z.object({
     model: z.string().optional(),
@@ -507,247 +756,203 @@ export const gameChat = chat.agent({
       }
     )
 
-    const MAX_TURN_RETRIES = 3
-    let currentModelMessages = sanitizedMessages
-    let lastError: unknown
+    const userMessages = sanitizedMessages.filter((m) => m.role === "user")
+    const isInitialTurn = userMessages.length <= 1
+
     let lastResponseMessage: UIMessage | undefined
 
-    for (let attempt = 0; attempt < MAX_TURN_RETRIES; attempt++) {
-      if (signal?.aborted) {
-        break
+    if (isInitialTurn) {
+      // -------------------------------------------------------------
+      // TURN 1: Sequential 3-Agent Collaborative Pipeline
+      // Phase 1 (Game Architect) -> Phase 2 (Art Director) -> Phase 3 (Gameplay Engineer)
+      // -------------------------------------------------------------
+      const userPromptText =
+        getInitialPromptText(sanitizedMessages) || "Create a 3D game"
+
+      // PHASE 1: Game Director & Architect
+      const phase1 = await runAgentPhase({
+        phaseName: "Phase 1: Game Architect",
+        statusText: "Phase 1/3: Designing game architecture & visual plan...",
+        instructions: ARCHITECT_SYSTEM_PROMPT,
+        tools: architectTools,
+        messages: sanitizedMessages,
+        maxSteps: 15,
+        selectedModel,
+        signal,
+        chatId,
+        orgId,
+        modelId,
+        streamText,
+        lastResponseMessage,
+      })
+
+      lastResponseMessage = phase1.lastResponseMessage
+      if (phase1.aborted || signal?.aborted || chat.isStopped()) {
+        if (lastResponseMessage) {
+          chat.history.set(
+            upsertMessage(chat.history.all(), lastResponseMessage)
+          )
+        }
+        return
       }
 
+      // Read the newly minted architecture plan from sandbox disk
+      let planContent = ""
       try {
-        const result = streamText({
-          model: selectedModel,
-          tools,
-          instructions,
-          messages: currentModelMessages,
-          abortSignal: signal,
-
-          onLanguageModelCallStart: (event) => {
-            const rawInstructions = event.instructions
-            const systemPromptText =
-              typeof rawInstructions === "string"
-                ? rawInstructions
-                : Array.isArray(rawInstructions)
-                  ? rawInstructions
-                      .map((m) =>
-                        typeof m === "object" && m && "content" in m
-                          ? String(m.content)
-                          : JSON.stringify(m)
-                      )
-                      .join("\n\n---\n\n")
-                  : typeof rawInstructions === "object" &&
-                      rawInstructions &&
-                      "content" in rawInstructions
-                    ? String((rawInstructions as { content: unknown }).content)
-                    : JSON.stringify(rawInstructions)
-
-            const toolNames = event.tools
-              ? event.tools
-                  .map((t) => (t as { name?: string }).name)
-                  .filter(Boolean)
-              : []
-
-            logger.info(
-              `==================== [LLM CALL: ACTUAL RUNTIME PROMPT & TOOLS] (Chat: ${chatId} | Attempt: ${attempt + 1}) ====================`,
-              {
-                attempt: attempt + 1,
-                provider: event.provider,
-                modelId: event.modelId,
-                callId: event.callId,
-                systemPrompt: systemPromptText,
-                rawInstructions,
-                toolNames,
-                toolsCount: toolNames.length,
-                messagesCount: event.messages?.length ?? 0,
-              }
-            )
-          },
-
-          stopWhen: stepCountIs(100),
-          maxRetries: 4,
-
-          prepareStep: async ({ messages: stepMessages, steps }) =>
-            prepareStepContext({ messages: stepMessages, steps, chatId }),
-
-          onStepFinish: async (step) =>
-            chargeStepCredits(step, { orgId, chatId, modelId }),
-
-          providerOptions: {
-            vertex: {
-              thinkingConfig: {
-                includeThoughts: true,
-              },
-            },
-
-            google: {
-              // Stateless multi-turn: preserves local step pruning and compaction without server-side context conflicts
-              store: false,
-              thinkingConfig: {
-                includeThoughts: true,
-              },
-              thinkingLevel: "high",
-              thinkingSummaries: "auto",
-            },
-          },
-        })
-
-        const pipeResult = await chat.pipeAndCapture(result, {
-          signal,
-          originalMessages: lastResponseMessage
-            ? upsertMessage(chat.history.all(), lastResponseMessage)
-            : chat.history.all(),
-        })
-
-        if (pipeResult.message) {
-          lastResponseMessage = pipeResult.message
-        }
-
-        // Check if user manually stopped or aborted the turn
-        if (
-          signal?.aborted ||
-          chat.isStopped() ||
-          pipeResult.status === "aborted"
-        ) {
-          if (lastResponseMessage) {
-            chat.history.set(
-              upsertMessage(chat.history.all(), lastResponseMessage)
-            )
-          }
-          return
-        }
-
-        // Detect whether the turn encountered an error (even if pipeResult.status was "complete"
-        // because toUIMessageStream absorbed the error via uiMessageStreamOptions.onError)
-        const streamError = locals.get(streamErrorKey)
-        const rawStreamError = locals.get(rawStreamErrorKey)
-        const storedResolvedError = locals.get(resolvedErrorKey)
-
-        const isErrorFinish =
-          pipeResult.status === "error" ||
-          pipeResult.finishReason === "error" ||
-          pipeResult.finishReason === "other" ||
-          Boolean(pipeResult.error) ||
-          Boolean(streamError) ||
-          Boolean(storedResolvedError)
-
-        if (!isErrorFinish && pipeResult.status === "complete") {
-          // True successful completion!
-          if (lastResponseMessage) {
-            chat.history.set(
-              upsertMessage(chat.history.all(), lastResponseMessage)
-            )
-          }
-          return
-        }
-
-        // An error occurred during streaming (e.g. Vertex AI mid-stream quota cut)
-        lastError =
-          pipeResult.error ||
-          rawStreamError ||
-          streamError ||
-          (pipeResult.finishReason
-            ? new Error(
-                `Stream terminated prematurely with finishReason: ${pipeResult.finishReason}`
-              )
-            : new Error("Stream interrupted"))
-
-        const isQuotaOrInterrupted =
-          isRetryableQuotaError(lastError, pipeResult.finishReason) ||
-          storedResolvedError?.category === "rate_limit"
-
-        if (!isQuotaOrInterrupted || attempt >= MAX_TURN_RETRIES - 1) {
-          if (lastResponseMessage) {
-            const cleaned = chat.cleanupAbortedParts(lastResponseMessage)
-            chat.history.set(upsertMessage(chat.history.all(), cleaned))
-          }
-          if (lastError) throw lastError
-          return
-        }
-
-        // Clear error locals so the retry attempt starts with a clean slate
-        locals.set(streamErrorKey, undefined)
-        locals.set(rawStreamErrorKey, undefined)
-        locals.set(resolvedErrorKey, undefined)
-
-        // Mid-stream quota exhaustion or stream interruption encountered!
-        const waitSec = 20 + attempt * 5
-        logger.warn(
-          `Vertex AI mid-stream rate-limit/interruption encountered (attempt ${attempt + 1}/${MAX_TURN_RETRIES}). Pausing ${waitSec}s to replenish quota before automatically continuing...`,
-          {
-            chatId,
-            attempt: attempt + 1,
-            finishReason: pipeResult.finishReason,
-            error:
-              lastError instanceof Error
-                ? lastError.message
-                : String(lastError),
-          }
+        const sandbox = await getGameSandbox(chatId)
+        const planBuf = await sandbox.fs.downloadFile(
+          `${GAME_DIR}/artifacts/game-plan.md`
         )
-
-        // Show user-friendly status in UI without exposing quota/rate-limit internals
-        chat.response.write({
-          type: "data-step-status",
-          id: "step-status",
-          data: {
-            text: "Preparing next step...",
-          },
-          transient: true,
-        })
-
-        await new Promise((r) => setTimeout(r, waitSec * 1000))
-
-        const { modelMessages, retryMessage } = await prepareRetryContext({
-          sanitizedMessages,
-          lastResponseMessage,
-          tools,
-        })
-        lastResponseMessage = retryMessage
-        currentModelMessages = modelMessages
+        planContent = planBuf.toString("utf-8")
       } catch (err) {
-        lastError = err
-        if (signal?.aborted) break
-        const isQuotaOrInterrupted = isRetryableQuotaError(err)
-        if (!isQuotaOrInterrupted || attempt >= MAX_TURN_RETRIES - 1) {
-          throw err
-        }
-
-        // Clear error locals on retry
-        locals.set(streamErrorKey, undefined)
-        locals.set(rawStreamErrorKey, undefined)
-        locals.set(resolvedErrorKey, undefined)
-
-        const waitSec = 20 + attempt * 5
         logger.warn(
-          `Vertex AI call threw retryable error (attempt ${attempt + 1}/${MAX_TURN_RETRIES}). Waiting ${waitSec}s...`,
-          { error: err instanceof Error ? err.message : String(err) }
+          `artifacts/game-plan.md not found on disk after Agent 1: ${err}`,
+          { chatId }
         )
-
-        chat.response.write({
-          type: "data-step-status",
-          id: "step-status",
-          data: {
-            text: "Preparing next step...",
-          },
-          transient: true,
-        })
-
-        await new Promise((r) => setTimeout(r, waitSec * 1000))
-
-        const { modelMessages, retryMessage } = await prepareRetryContext({
-          sanitizedMessages,
-          lastResponseMessage,
-          tools,
-        })
-        lastResponseMessage = retryMessage
-        currentModelMessages = modelMessages
       }
+
+      // PHASE 2: Art Director & Asset Specialist
+      const artistUserPrompt = planContent
+        ? `User Game Request: "${userPromptText}"
+
+Agent 1 (Game Director & Architect) has generated the game design specification in artifacts/game-plan.md:
+
+${planContent}
+
+As the Art Director & Asset Specialist:
+1. Generate the visual textures specified in the Asset Manifest using \`generate_texture\` (e.g. for environment/ground, player/hero, obstacles/structures).
+2. Generate the background music/audio specified in the Asset Manifest using \`generate_music\`.
+3. Update artifacts/game-plan.md using \`write_file\` to record the generated assets with their verified paths.
+Maintain strict adherence to the 3-color palette and aesthetic theme.`
+        : `User Game Request: "${userPromptText}"
+
+Agent 1 (Game Director & Architect) has completed the initial game design.
+As the Art Director & Asset Specialist:
+1. Read artifacts/game-plan.md using \`read_file\` to inspect the asset requirements.
+2. Generate the visual textures using \`generate_texture\`.
+3. Generate the background music using \`generate_music\`.
+4. Update artifacts/game-plan.md to record the generated assets.`
+
+      const artistMessages: ModelMessage[] = [
+        {
+          role: "user",
+          content: artistUserPrompt,
+        },
+      ]
+
+      const phase2 = await runAgentPhase({
+        phaseName: "Phase 2: Art Director",
+        statusText: "Phase 2/3: Generating 3D textures & audio...",
+        instructions: ARTIST_SYSTEM_PROMPT,
+        tools: artistTools,
+        messages: artistMessages,
+        maxSteps: 25,
+        selectedModel,
+        signal,
+        chatId,
+        orgId,
+        modelId,
+        streamText,
+        lastResponseMessage,
+      })
+
+      lastResponseMessage = phase2.lastResponseMessage
+      if (phase2.aborted || signal?.aborted || chat.isStopped()) {
+        if (lastResponseMessage) {
+          chat.history.set(
+            upsertMessage(chat.history.all(), lastResponseMessage)
+          )
+        }
+        return
+      }
+
+      // Read updated plan from sandbox disk
+      let updatedPlanContent = planContent
+      try {
+        const sandbox = await getGameSandbox(chatId)
+        const planBuf = await sandbox.fs.downloadFile(
+          `${GAME_DIR}/artifacts/game-plan.md`
+        )
+        updatedPlanContent = planBuf.toString("utf-8")
+      } catch {
+        // Fallback to initial planContent
+      }
+
+      // PHASE 3: Lead Gameplay & Three.js Engineer
+      const engineerUserPrompt = `User Game Request: "${userPromptText}"
+
+The Game Architecture Plan and visual/audio assets are ready.
+Here is the current artifacts/game-plan.md:
+
+${updatedPlanContent}
+
+As the Lead Gameplay Engineer:
+1. Inspect the generated textures in \`assets/textures/\` and music in \`assets/audio/\`.
+2. Implement the complete, high-tension 60 FPS Three.js game adhering strictly to the architecture plan, 3-color lighting, diegetic HUD, and 5-state lifecycle.
+3. Run \`verify_game\` to ensure zero compilation or runtime errors.
+4. Update \`artifacts/game-state.md\` with the implementation status and mechanics summary.
+5. Provide a concise summary of the finished game to the player.`
+
+      const engineerMessages: ModelMessage[] = [
+        {
+          role: "user",
+          content: engineerUserPrompt,
+        },
+      ]
+
+      const phase3 = await runAgentPhase({
+        phaseName: "Phase 3: Lead Gameplay Engineer",
+        statusText: "Phase 3/3: Implementing gameplay & verifying engine...",
+        instructions: ENGINEER_SYSTEM_PROMPT,
+        tools: engineerTools,
+        messages: engineerMessages,
+        maxSteps: 100,
+        selectedModel,
+        signal,
+        chatId,
+        orgId,
+        modelId,
+        streamText,
+        lastResponseMessage,
+      })
+
+      lastResponseMessage = phase3.lastResponseMessage
+      if (lastResponseMessage) {
+        chat.history.set(upsertMessage(chat.history.all(), lastResponseMessage))
+      }
+      return
     }
 
-    if (lastError) {
-      throw lastError
+    // -------------------------------------------------------------
+    // TURN 2+: Surgical Bug Fixing & Controls Iteration
+    // Agent 3 (Lead Gameplay Engineer) executes directly.
+    // -------------------------------------------------------------
+    const prunedTurnMessages = pruneMessages({
+      messages: sanitizedMessages,
+      reasoning: "before-last-message",
+      emptyMessages: "remove",
+    })
+
+    const phase = await runAgentPhase({
+      phaseName: "Gameplay Engineer (Iteration)",
+      statusText: "Analyzing code & applying gameplay updates...",
+      instructions: ENGINEER_SYSTEM_PROMPT,
+      tools: engineerTools,
+      messages: prunedTurnMessages,
+      maxSteps: 100,
+      selectedModel,
+      signal,
+      chatId,
+      orgId,
+      modelId,
+      streamText,
+      lastResponseMessage,
+    })
+
+    if (phase.lastResponseMessage) {
+      chat.history.set(
+        upsertMessage(chat.history.all(), phase.lastResponseMessage)
+      )
     }
   },
 })
