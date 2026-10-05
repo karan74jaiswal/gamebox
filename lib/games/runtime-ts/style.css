@@ -8,11 +8,13 @@
 
 :root {
   color-scheme: dark;
-  --ink: #0a0a0a;
+  --ink: #0c1311;
   --snow: #ededed;
   --mist: #a1a1a1;
-  --ember: #ea580c;
-  --amber: #fb923c;
+  --emerald: #10b981;
+  --mint: #34d399;
+  --ember: #10b981;
+  --amber: #34d399;
 }
 
 * {
@@ -117,7 +119,7 @@ canvas {
   flex-direction: column;
   align-items: center;
   padding: clamp(24px, 5vh, 60px) 20px 40px;
-  background: radial-gradient(circle at 50% 20%, rgba(10, 10, 10, 0.4) 0%, rgba(10, 10, 10, 0.88) 85%);
+  background: radial-gradient(circle at 50% 20%, rgba(12, 19, 17, 0.4) 0%, rgba(10, 16, 14, 0.88) 85%);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   pointer-events: auto;
@@ -140,9 +142,9 @@ canvas {
   letter-spacing: 0.08em;
   padding: 4px 12px;
   border-radius: 9999px;
-  background: rgba(234, 88, 12, 0.15);
-  color: var(--amber);
-  border: 1px solid rgba(234, 88, 12, 0.35);
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--mint);
+  border: 1px solid rgba(16, 185, 129, 0.35);
   margin-bottom: 12px;
 }
 
@@ -188,9 +190,9 @@ canvas {
 
 .arcade-card:hover {
   transform: translateY(-4px);
-  border-color: rgba(234, 88, 12, 0.5);
-  background: rgba(30, 30, 35, 0.85);
-  box-shadow: 0 12px 30px rgba(234, 88, 12, 0.15);
+  border-color: rgba(16, 185, 129, 0.5);
+  background: rgba(20, 28, 25, 0.85);
+  box-shadow: 0 12px 30px rgba(16, 185, 129, 0.15);
 }
 
 .arcade-card-top {
@@ -241,7 +243,7 @@ canvas {
 }
 
 .arcade-card-controls strong {
-  color: var(--amber);
+  color: var(--mint);
   display: block;
   margin-bottom: 3px;
   font-size: 0.675rem;
@@ -254,7 +256,7 @@ canvas {
   padding: 10px 14px;
   border-radius: 8px;
   border: none;
-  background: #ea580c;
+  background: #10b981;
   color: white;
   font-weight: 650;
   font-size: 0.85rem;
@@ -267,7 +269,7 @@ canvas {
 }
 
 .arcade-card-btn:hover {
-  background: #f97316;
+  background: #059669;
 }
 
 .arcade-card-btn:active {
@@ -299,8 +301,8 @@ canvas {
 }
 
 .template-switcher-pill:hover {
-  background: rgba(30, 41, 59, 0.95);
-  border-color: rgba(234, 88, 12, 0.6);
+  background: rgba(20, 32, 28, 0.95);
+  border-color: rgba(16, 185, 129, 0.6);
   transform: translateY(-1px);
 }
 
@@ -383,15 +385,15 @@ canvas {
 }
 
 .template-modal-item:hover {
-  background: rgba(234, 88, 12, 0.12);
-  border-color: rgba(234, 88, 12, 0.4);
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.4);
   color: #fff;
 }
 
 .template-modal-item.active {
-  background: rgba(234, 88, 12, 0.2);
-  border-color: #ea580c;
-  color: #fb923c;
+  background: rgba(16, 185, 129, 0.2);
+  border-color: #10b981;
+  color: #34d399;
   font-weight: 600;
 }
 

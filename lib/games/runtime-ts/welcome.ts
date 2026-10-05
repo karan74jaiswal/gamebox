@@ -14,26 +14,26 @@ launchWelcome()
  * Boots the default 3D spinning mark and overlays the interactive Arcade Menu.
  */
 function launchWelcome() {
-  const EMBER = "#ea580c"
-  const AMBER = "#fb923c"
+  const EMERALD = "#10b981"
+  const MINT = "#34d399"
 
   const engine = createEngine({
-    background: "#0a0a0a",
+    background: "#0c1311",
     fov: 40,
     cameraPosition: [0, 2.1, 9],
     lookAt: [0, 1.15, 0],
-    fog: { color: "#0a0a0a", near: 9, far: 24 },
-    exposure: 0.92,
+    fog: { color: "#0c1311", near: 9, far: 24 },
+    exposure: 0.94,
   })
 
   // --- The mark ---
   const FACES = [
-    "#ea580c",
-    "#c2410c",
-    "#fb923c",
-    "#7c2d12",
-    "#f97316",
-    "#9a3412",
+    "#10b981",
+    "#059669",
+    "#34d399",
+    "#047857",
+    "#00dc82",
+    "#065f46",
   ]
 
   const faces = FACES.map((color) =>
@@ -42,7 +42,7 @@ function launchWelcome() {
       roughness: 0.72,
       metalness: 0,
       emissive: new THREE.Color(color),
-      emissiveIntensity: 0.12,
+      emissiveIntensity: 0.14,
     })
   )
 
@@ -51,7 +51,7 @@ function launchWelcome() {
 
   const edges = new THREE.LineSegments(
     new THREE.EdgesGeometry(cube.geometry),
-    new THREE.LineBasicMaterial({ color: new THREE.Color(EMBER) })
+    new THREE.LineBasicMaterial({ color: new THREE.Color(EMERALD) })
   )
   cube.add(edges)
 
@@ -62,7 +62,7 @@ function launchWelcome() {
   engine.add(mark)
 
   // --- The room ---
-  const floor = models.ground(60, { color: "#1a1a1a", accent: "#141414" })
+  const floor = models.ground(60, { color: "#141c19", accent: "#0e1513" })
   engine.add(floor)
 
   const shadow = lights.blobShadow(engine.scene, mark, {
@@ -72,7 +72,7 @@ function launchWelcome() {
 
   lights.studio(engine.scene, { intensity: 0.42 })
 
-  const glow = new THREE.PointLight(new THREE.Color(EMBER), 34, 14, 2)
+  const glow = new THREE.PointLight(new THREE.Color(EMERALD), 34, 14, 2)
   glow.position.set(0, 0.9, -4.5)
   engine.add(glow)
 
@@ -93,11 +93,11 @@ function launchWelcome() {
       return geometry
     })(),
     new THREE.PointsMaterial({
-      color: new THREE.Color(AMBER),
+      color: new THREE.Color(MINT),
       size: 0.05,
       map: materials.sparkTexture({ color: "#ffffff" }),
       transparent: true,
-      opacity: 0.7,
+      opacity: 0.75,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     })

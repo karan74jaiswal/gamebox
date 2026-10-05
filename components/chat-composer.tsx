@@ -2,7 +2,7 @@
 
 import * as React from "react"
 import { useRouter } from "next/navigation"
-import { Grip, ChevronDown, ArrowUp, Square } from "lucide-react"
+import { Grip, ChevronDown, ArrowUp, Square, Loader2 } from "lucide-react"
 import * as Sentry from "@sentry/nextjs"
 
 import {
@@ -43,6 +43,7 @@ export interface ChatComposerProps {
   onCancel?: () => void
   model?: string
   onModelChange?: (model: string) => void
+  onCreatingChange?: (isCreating: boolean) => void
 }
 
 export function ChatComposer({
@@ -59,12 +60,14 @@ export function ChatComposer({
   onCancel,
   model: controlledModel,
   onModelChange,
+  onCreatingChange,
 }: ChatComposerProps = {}) {
   const router = useRouter()
   const [internalPrompt, setInternalPrompt] = React.useState("")
   const [internalModel, setInternalModel] = React.useState(
     controlledModel || DEFAULT_MODEL_ID
   )
+  const [isCreating, setIsCreating] = React.useState(false)
   const [isPending, startTransition] = React.useTransition()
 
   React.useEffect(() => {
@@ -100,7 +103,12 @@ export function ChatComposer({
 
   const handleSubmit = () => {
     const content = currentValue.trim()
-    if (!content || isPending || isStreaming || isInputDisabled) return
+    if (!content || isPending || isStreaming || isInputDisabled || isCreating) return
+
+    if (!sendMessage) {
+      setIsCreating(true)
+      onCreatingChange?.(true)
+    }
 
     startTransition(async () => {
       try {
@@ -124,6 +132,8 @@ export function ChatComposer({
         onInputChange?.("")
         onChange?.("")
       } catch (error) {
+        setIsCreating(false)
+        onCreatingChange?.(false)
         Sentry.logger.error(
           sendMessage ? "Failed to send message" : "Failed to create game",
           {
@@ -136,24 +146,31 @@ export function ChatComposer({
   }
 
   return (
-    <div className={cn("flex w-full flex-col gap-6", className)}>
-      <InputGroup className="bg-popover">
+    <div className={cn("flex w-full flex-col gap-3", className)}>
+      <InputGroup
+        className={cn(
+          "bg-popover transition-all duration-300",
+          isCreating &&
+            "border-primary/60 shadow-[0_0_25px_-5px_rgba(var(--primary),0.3)] ring-1 ring-primary/40"
+        )}
+      >
         <InputGroupTextarea
           className="field-sizing-content max-h-48 min-h-10"
           rows={1}
-          placeholder={activePlaceholder}
+          placeholder={isCreating ? "Launching workspace..." : activePlaceholder}
           value={currentValue}
           onChange={(e) => handleInputChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault()
-              if (!isStreaming && !isInputDisabled && !isPending) handleSubmit()
+              if (!isStreaming && !isInputDisabled && !isPending && !isCreating)
+                handleSubmit()
             } else if (e.key === "Escape" && isStreaming && handleCancel) {
               e.preventDefault()
               handleCancel()
             }
           }}
-          disabled={isPending || isInputDisabled}
+          disabled={isPending || isInputDisabled || isCreating}
         />
         <InputGroupAddon align="block-end" className="justify-between">
           <DropdownMenu>
@@ -161,7 +178,7 @@ export function ChatComposer({
               render={
                 <InputGroupButton
                   variant="ghost"
-                  disabled={isStreaming || disabled}
+                  disabled={isStreaming || disabled || isCreating}
                 >
                   <Grip />
                   <span className="max-w-[140px] truncate">
@@ -195,7 +212,16 @@ export function ChatComposer({
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {isStreaming && handleCancel ? (
+          {isCreating ? (
+            <InputGroupButton
+              size="icon-sm"
+              variant="default"
+              className="rounded-full pointer-events-none"
+              disabled
+            >
+              <Loader2 className="size-3.5 animate-spin text-primary-foreground" />
+            </InputGroupButton>
+          ) : isStreaming && handleCancel ? (
             <InputGroupButton
               size="icon-sm"
               variant="default"
@@ -210,7 +236,9 @@ export function ChatComposer({
               size="icon-sm"
               variant="default"
               className="rounded-full"
-              disabled={!currentValue.trim() || isPending || isInputDisabled}
+              disabled={
+                !currentValue.trim() || isPending || isInputDisabled || isCreating
+              }
               onClick={handleSubmit}
             >
               <ArrowUp />
@@ -218,6 +246,13 @@ export function ChatComposer({
           )}
         </InputGroupAddon>
       </InputGroup>
+
+      {isCreating && (
+        <div className="flex items-center justify-center gap-2 text-xs font-medium text-muted-foreground animate-in fade-in slide-in-from-top-1.5 duration-300">
+          <Loader2 className="size-3 animate-spin text-primary" />
+          <span>Launching game workspace & sandbox...</span>
+        </div>
+      )}
     </div>
   )
 }
