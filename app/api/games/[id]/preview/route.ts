@@ -7,6 +7,8 @@ import {
 import { getGame } from "@/lib/games/queries"
 import { setCachedPreviewUrl } from "./live/[[...path]]/route"
 
+export const maxDuration = 60
+
 /**
  * The url a game's preview iframe loads.
  *

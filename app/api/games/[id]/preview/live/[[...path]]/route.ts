@@ -9,6 +9,8 @@ import {
 } from "@/lib/daytona/utils"
 import { getGame } from "@/lib/games/queries"
 
+export const maxDuration = 60
+
 // In-memory cache for preview base URLs to keep asset requests fast
 const previewUrlCache = new Map<string, { url: string; expiresAt: number }>()
 
