@@ -228,6 +228,7 @@ async function runAgentPhase(params: AgentPhaseParams): Promise<{
           const toolNames = event.tools
             ? // eslint-disable-next-line @typescript-eslint/no-explicit-any
               event.tools
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 .map((t: any) => (t as { name?: string }).name)
                 .filter(Boolean)
             : []
