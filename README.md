@@ -111,38 +111,40 @@ Building a complete, polished 3D game requires specialization. Rather than deleg
 
 ```mermaid
 flowchart TD
-    User([User Prompt: 'Synthwave drift racer with boost pads']) --> Phase1
+    User(["User Prompt: Synthwave drift racer with boost pads"]) --> Phase1
     
     subgraph P1 ["Phase 1: Game Director & Architect"]
-        Phase1[Analyze Prompt & Plan] --> LoopContract["Core Loop Contract & Mechanics"]
-        Phase1 --> Lighting["3-Color Lighting Script (Strict No-White-Light)"]
+        Phase1["Analyze Prompt & Plan"] --> LoopContract["Core Loop Contract & Mechanics"]
+        Phase1 --> Lighting["3-Color Lighting Script: Strict No-White-Light"]
         Phase1 --> HUDTheme["Diegetic HUD Persona & Combat Tells"]
         Phase1 --> Manifest["Asset Manifest: Textures & Audio"]
-        Manifest --> WritePlan[("write_file('artifacts/game-plan.md')")]
+        Manifest --> WritePlan[("write_file: artifacts/game-plan.md")]
     end
     
     WritePlan --> Phase2
     
     subgraph P2 ["Phase 2: Art Director & Asset Specialist"]
-        Phase2[Read Asset Manifest] --> GenTex["generate_texture(): Gemini Image Models"]
-        Phase2 --> GenAudio["generate_music(): Google Lyria Models"]
+        Phase2["Read Asset Manifest"] --> GenTex["generate_texture: Gemini Image Models"]
+        Phase2 --> GenAudio["generate_music: Google Lyria Models"]
         GenTex --> SaveTex[("assets/textures/*.png")]
         GenAudio --> SaveAudio[("assets/audio/*.mp3")]
-        SaveTex & SaveAudio --> UpdatePlan[("Update 'artifacts/game-plan.md'")]
+        SaveTex --> UpdatePlan[("Update artifacts/game-plan.md")]
+        SaveAudio --> UpdatePlan
     end
     
     UpdatePlan --> Phase3
     
     subgraph P3 ["Phase 3: Lead Gameplay Engineer"]
-        Phase3[Bind Assets & Author Three.js Source] --> Lifecycle["5-State Lifecycle (Load ➔ Start ➔ Play ➔ Pause ➔ End)"]
-        Lifecycle --> ShaderWarm["Shader Pre-Warming (renderer.compile)"]
+        Phase3["Bind Assets & Author Three.js Source"] --> Lifecycle["5-State Lifecycle: Load, Start, Play, Pause, End"]
+        Lifecycle --> ShaderWarm["Shader Pre-Warming: renderer.compile"]
         Lifecycle --> SoundRig["Web Audio & Game Feel Wiring"]
-        Lifecycle --> VerifyCheck{"verify_game (tsc --noEmit)"}
-        VerifyCheck -- "Errors Found" --> SurgFix["Surgical Fixes (replace_text)"] --> VerifyCheck
+        Lifecycle --> VerifyCheck{"verify_game: tsc --noEmit"}
+        VerifyCheck -- "Errors Found" --> SurgFix["Surgical Fixes: replace_text"]
+        SurgFix --> VerifyCheck
         VerifyCheck -- "0 Errors Passed" --> CommitGit["Git Checkpoint & artifacts/game-state.md"]
     end
     
-    CommitGit --> LivePreview([Live Interactive Preview])
+    CommitGit --> LivePreview(["Live Interactive Preview"])
 ```
 
 ### Turn 1: Initial Creation
@@ -254,19 +256,19 @@ flowchart LR
     subgraph Client ["Client Browser"]
         Composer["Chat Composer & Model Picker"]
         LiveIframe["Live Preview Iframe"]
-        ReportScript["report.js (In-Frame Error Trap)"]
+        ReportScript["report.js: In-Frame Error Trap"]
     end
 
     subgraph VercelApp ["Next.js 16 on Vercel"]
         ServerActions["Server Actions: createGame, startSession"]
-        ProxyRoute["/api/games/[id]/preview/live/* (maxDuration = 60)"]
-        TunnelRoute["/monitoring (Sentry Tunnel)"]
-        ClerkAuth["Clerk Middleware (proxy.ts)"]
+        ProxyRoute["/api/games/[id]/preview/live/*: maxDuration = 60"]
+        TunnelRoute["/monitoring: Sentry Tunnel"]
+        ClerkAuth["Clerk Middleware: proxy.ts"]
     end
 
     subgraph DataStore ["Database & Storage"]
         NeonDB[("Neon Serverless Postgres")]
-        CreditTable["credit_ledger (Nano-dollars)"]
+        CreditTable["credit_ledger: Nano-dollars"]
     end
 
     subgraph TriggerWorker ["Trigger.dev v4 Worker"]
@@ -277,24 +279,24 @@ flowchart LR
     end
 
     subgraph CloudSandbox ["Daytona Linux Sandbox"]
-        ViteDev["Vite Dev Server (Port 3000)"]
-        GameFiles["/home/daytona/game (TypeScript Source)"]
-        EngineToolkit["./engine (Seeded Three.js Toolkit)"]
+        ViteDev["Vite Dev Server: Port 3000"]
+        GameFiles["/home/daytona/game: TypeScript Source"]
+        EngineToolkit["./engine: Seeded Three.js Toolkit"]
         GitRepo["Git Repository Checkpoints"]
         LSP["Daytona LSP Server"]
     end
 
-    Composer -->|Create Game & Start Turn| ServerActions
-    ServerActions -->|Start Chat Session| ChatAgent
-    ChatAgent -->|Stream SSE (Reasoning, Tools, Text)| Composer
-    ChatAgent -->|File Edits & Typecheck| GameFiles
-    ChatAgent -->|Symbol Lookup| LSP
-    ChatAgent -->|Record Step Cost| CreditTable
-    GameFiles -->|Vite HMR & Serve| ViteDev
-    ViteDev -->|Proxied via Signed URL| ProxyRoute
-    ProxyRoute -->|Render Preview| LiveIframe
-    ReportScript -->|postMessage Diagnostics| Composer
-    ServerActions <-->|Neon HTTP Pooler / WS| NeonDB
+    Composer -->|"Create Game & Start Turn"| ServerActions
+    ServerActions -->|"Start Chat Session"| ChatAgent
+    ChatAgent -->|"Stream SSE: Reasoning, Tools, Text"| Composer
+    ChatAgent -->|"File Edits & Typecheck"| GameFiles
+    ChatAgent -->|"Symbol Lookup"| LSP
+    ChatAgent -->|"Record Step Cost"| CreditTable
+    GameFiles -->|"Vite HMR & Serve"| ViteDev
+    ViteDev -->|"Proxied via Signed URL"| ProxyRoute
+    ProxyRoute -->|"Render Preview"| LiveIframe
+    ReportScript -->|"postMessage Diagnostics"| Composer
+    ServerActions -->|"Neon Pooler / WS"| NeonDB
 ```
 
 1. **Game Creation**: The user enters a premise in the home composer. A new game record is created in Neon Postgres, and the user navigates to `/games/[id]`.
@@ -442,15 +444,15 @@ flowchart TD
         NextWeb["Next.js 16 Web Application"]
         ServerActionsProd["Server Actions & Clerk Auth"]
         ProxyLive["/api/games/[id]/preview/live/*"]
-        SentryTunnel["/monitoring (Ad-block resistant telemetry)"]
+        SentryTunnel["/monitoring: Telemetry Tunnel"]
     end
 
     subgraph CloudServices ["Managed Cloud Backends"]
-        TriggerCloud["Trigger.dev Cloud (Node 24 Worker)"]
-        DaytonaCloud["Daytona Cloud (Linux Sandboxes)"]
-        NeonCloud["Neon Postgres (Compute & PgBouncer)"]
-        ClerkCloud["Clerk (Auth & Billing)"]
-        SentryCloud["Sentry (Error & Trace Platform)"]
+        TriggerCloud["Trigger.dev Cloud: Node 24 Worker"]
+        DaytonaCloud["Daytona Cloud: Linux Sandboxes"]
+        NeonCloud["Neon Postgres: Compute & PgBouncer"]
+        ClerkCloud["Clerk: Auth & Billing"]
+        SentryCloud["Sentry: Error & Trace Platform"]
     end
 
     NextWeb --> ClerkCloud
@@ -458,7 +460,8 @@ flowchart TD
     ServerActionsProd --> TriggerCloud
     TriggerCloud --> DaytonaCloud
     ProxyLive --> DaytonaCloud
-    NextWeb & TriggerCloud --> SentryCloud
+    NextWeb --> SentryCloud
+    TriggerCloud --> SentryCloud
 ```
 
 ### 1. Import Repository into Vercel
